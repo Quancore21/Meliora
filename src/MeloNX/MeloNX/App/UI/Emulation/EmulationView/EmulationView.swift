@@ -146,9 +146,15 @@ struct EmulationView: View {
                 isInBackground = false
                 pauseEmu = false
             } else if newPhase == .inactive {
-                RyujinxBridge.pauseEmulation(true)
-                isInBackground = true
-                pauseEmu = true
+                // StikDebug's PiP window / notification banners briefly make the
+                // scene inactive. While the game is still loading (no first frame
+                // yet), pausing here would leave the Loading overlay up forever,
+                // so skip the pause until emulation is actually running.
+                if !Ryujinx.shared.showLoading {
+                    RyujinxBridge.pauseEmulation(true)
+                    isInBackground = true
+                    pauseEmu = true
+                }
             }
         }
         .sheet(isPresented: $showControllerSettings) {

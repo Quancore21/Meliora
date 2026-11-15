@@ -9,7 +9,7 @@
   Based on <a href="https://github.com/VertexSelection/MeloVertex">MeloVertex</a>, which is based on MeloNX, which is based on Ryujinx.
 </p>
 
-**Version 0.0.1**, an early release: see the [changelog](CHANGELOG.md) for what is different from MeloVertex and what the stability pass fixed.
+**Version 0.0.2**, see the [changelog](CHANGELOG.md) for what is different from MeloVertex and what the stability pass fixed.
 
 > **Unofficial project.** Meliora is an independent fork. It is **not affiliated with** the MeloNX team, the MeloVertex author or the Ryujinx project. Please do not ask them for support with Meliora.
 

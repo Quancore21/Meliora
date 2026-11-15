@@ -51,7 +51,19 @@ namespace Ryujinx.Memory
             {
                 byte* ptr = BreakMarkJITMapping(bytes);
                 Logger.Info?.Print(LogClass.Cpu, $"testing for BreakGetJITMapping, got {(ulong)ptr}");
-                if (ptr == null || ptr == (byte*)0 || ptr == (byte*)-1 || ptr == (byte*)14757395257293275360 || ptr == (byte*)1761607904)
+                // When brk #0x69 is not handled (debugger not attached yet, or a
+                // newer StikDebug skips it), x0 still holds the first argument or
+                // a partial breakpoint marker instead of the real JIT mapping.
+                // Anything that is not a plausible RX mapping pointer must fall
+                // back to the pub entry point, otherwise the bogus value ends up
+                // in vm_remap and crashes the core.
+                ulong ptrValue = (ulong)ptr;
+                if (ptr == null || ptrValue == ulong.MaxValue ||
+                    ptrValue == 0xcccccccc690000e0 || ptrValue == 0x690000e0 ||
+                    ptr == (byte*)bytes ||
+                    ptrValue < 0x100000000UL ||
+                    (ptrValue & 0xFFFFFFFFUL) == 0x690000e0UL ||
+                    (ptrValue & 0xFFFFFFFFUL) == 0xe0000069UL)
                 {
                     ptr = BreakGetJITMappingPub(null, bytes);
                     Logger.Info?.Print(LogClass.Cpu, $"testing for BreakGetJITMapping Again, got {(ulong)ptr}");

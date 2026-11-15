@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.2 (JIT launch fix)
+
+Fixes the launch hang on iOS 26/27 (TXM) devices with StikDebug 3.2.x: the game stuck on the `Loading ...` overlay (FPS 0.00) because JIT was never correctly enabled.
+
+### Fixed
+
+- **StikDebug URL (TXM devices).** `stikjit://enable-jit` now matches MeloNX 2.7 exactly: on TXM devices (iOS 26/27) only `?bundle-id=` is sent — StikDebug 3.2.2 must run its **built-in** JIT26 script, and the previously appended `script-name=MeloVertex&script-data=...` broke the attach. The custom JIT26 script is still uploaded via `script-data` on non-TXM devices (percent-encoded base64, as upstream; `script-name=MeloNX` only in the LiveContainer case).
+- **TXM detection on iOS 27.x.** `ProcessInfo.hasTXM` now first reads the IOKit device tree (`IODeviceTree:/chosen/memory-map` contains `TXM`), the same check MeloNX 2.7 / StikDebug perform, falling back to the old `/System/Volumes/Preboot` check. On iOS 26+, when both checks are inconclusive because the sandbox blocks the directory listings, TXM is assumed present instead of misdetecting the device as non-TXM (`HAS_TXM=0`), which previously pushed the core onto a raw `mmap(PROT_EXEC)` path that cannot work on TXM devices.
+- **No JIT allocation before StikDebug attaches.** `initialize_dualmapped()` is no longer called at cold start or in `isJITEnabled()` while the debugger is not attached; a failed `BreakGetJITMapping` there used to poison the session. The dual-mapped cache is now allocated on the launch path, after JIT has been enabled.
+- **Breakpoint JIT mapping fallback (C#).** `BreakGetJITMapping` now also falls back to the pub entry point when `brk #0x69` leaves `x0` holding the requested size, a 32-bit value, or a `0x690000e0`/`0xe0000069` marker with different upper bits, instead of passing a bogus address into `vm_remap`.
+- **Swallowed crash alerts.** `presentAlert` walks to the top-most presented view controller, so "Meliora Crashed!" dialogs are no longer dropped behind the full-screen `Loading ...` overlay (which used to spin forever with FPS 0.00).
+- **Pause during loading.** The scene-phase handler no longer pauses emulation on `.inactive` while the Loading overlay is up — StikDebug's Picture-in-Picture window and notification banners briefly deactivate the scene before the first frame, which used to pause the game before it even started.
+
+### Updated
+
+- `BreakpointJIT.framework` and `libMoltenVK.dylib` replaced with the binaries from the known-working MeloNX 2.7 build; `distribution/ios/prebuilt.sha256` updated and now also covers `BreakpointJIT`.
+
 ## 0.0.1 (first Meliora release)
 
 Meliora starts from the MeloVertex 2.4.5 source. This release is about memory behaviour, stability and visibility; it does not change emulation accuracy.

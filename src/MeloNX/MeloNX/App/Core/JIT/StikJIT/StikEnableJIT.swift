@@ -65,15 +65,13 @@ private func hasStikDebugAttachEntitlement() -> Bool {
     checkAppEntitlement("get-task-allow") || checkAppEntitlement("dynamic-codesigning")
 }
 
-private func stikScriptDataURLSafe() -> String {
-    script
-        .replacingOccurrences(of: "+", with: "-")
-        .replacingOccurrences(of: "/", with: "_")
-        .replacingOccurrences(of: "=", with: "")
-}
-
 private func showStikDebugAttachWarning() {
-    guard let rootVC = AppDelegate.window?.rootViewController else { return }
+    guard var topVC = AppDelegate.window?.rootViewController else { return }
+    // Present on the top-most view controller; a direct present on
+    // rootViewController is silently dropped while a fullScreenCover is up.
+    while let presented = topVC.presentedViewController {
+        topVC = presented
+    }
 
     let message = """
     This build is missing the attach entitlement required by StikDebug.
@@ -86,7 +84,7 @@ private func showStikDebugAttachWarning() {
     let alert = UIAlertController(title: "StikDebug JIT Unavailable", message: message, preferredStyle: .alert)
     alert.addAction(UIAlertAction(title: "OK", style: .default))
     Task { @MainActor in
-        rootVC.present(alert, animated: true)
+        topVC.present(alert, animated: true)
     }
 }
 
@@ -95,24 +93,22 @@ private func buildStikJitEnableURL() -> URL? {
         return nil
     }
 
-    var components = URLComponents(string: "stikjit://enable-jit")
-    var items: [URLQueryItem] = []
+    let inLiveContainer = isInLiveContainer.0
 
-    if #available(iOS 19.0, *) {
-        // For iOS 26/TXM, including PID forces StikDebug into attach mode instead of launch-only.
-        // Keep bundle-id as metadata/fallback for tooling that still keys off identifiers.
-        items.append(URLQueryItem(name: "pid", value: String(getpid())))
-        items.append(URLQueryItem(name: "bundle-id", value: bundleID))
-        items.append(URLQueryItem(name: "script-name", value: "MeloVertex"))
-        items.append(URLQueryItem(name: "script-data", value: stikScriptDataURLSafe()))
-    } else if isInLiveContainer.0 {
-        items.append(URLQueryItem(name: "pid", value: String(getpid())))
+    // Mirrors MeloNX 2.7 exactly: on TXM devices (iOS 26/27) StikDebug uses its
+    // built-in JIT26 script, and script-name/script-data must NOT be sent —
+    // overriding the script there breaks attach on StikDebug 3.2.2.
+    var urlScheme = "stikjit://enable-jit"
+
+    if #available(iOS 19.0, *), !ProcessInfo.processInfo.hasTXM {
+        let scriptdata = script.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        urlScheme += inLiveContainer ? "?pid=\(getpid())&script-name=MeloNX" : ("?bundle-id=" + bundleID)
+        urlScheme += "&script-data=\(scriptdata)"
     } else {
-        items.append(URLQueryItem(name: "bundle-id", value: bundleID))
+        urlScheme += inLiveContainer ? "?pid=\(getpid())" : "?bundle-id=" + bundleID
     }
 
-    components?.queryItems = items
-    return components?.url
+    return URL(string: urlScheme)
 }
 
 func enableJITStik() {

@@ -120,7 +120,15 @@ struct MeloNXApp: View {
         
         if cool {
             EnvironmentVariable(string: "DUAL_MAPPED_JIT", value: "1").set()
-            LaunchGameHandler.succeededJIT = RyujinxBridge.initialize_dualmapped()
+            // The dual-mapped JIT region can only be allocated while a debugger
+            // (StikDebug) is attached. At cold start it usually is not yet, so
+            // defer allocation to the launch path (LaunchGameHandler), which
+            // runs after JIT has been enabled.
+            if checkDebugged() {
+                LaunchGameHandler.succeededJIT = RyujinxBridge.initialize_dualmapped()
+            } else {
+                LaunchGameHandler.succeededJIT = false
+            }
         } else {
             EnvironmentVariable(string: "DUAL_MAPPED_JIT", value: "0").set()
         }

@@ -106,11 +106,20 @@ func pingSite(host: String = "http://[fd00::]:9172/hello", completion: @escaping
 
 func presentAlert(title: String, message: String, imageName: String? = nil, completion: (() -> Void)? = nil) {
     guard let rootVC = AppDelegate.window?.rootViewController else { return }
-    
+
+    // Walk to the top-most presented view controller (e.g. the fullScreenCover
+    // hosting the emulation view). Presenting on rootViewController while a
+    // cover is up is silently dropped by UIKit, which used to swallow crash
+    // alerts behind the Loading overlay forever.
+    var topVC = rootVC
+    while let presented = topVC.presentedViewController {
+        topVC = presented
+    }
+
     if let imageName = imageName, UIImage(named: imageName) != nil {
         let customAlert = MacClassicAlertViewController(title: title, message: message, imageName: imageName, completion: completion)
         Task { @MainActor in
-            rootVC.present(customAlert, animated: true)
+            topVC.present(customAlert, animated: true)
         }
     } else {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
@@ -118,7 +127,7 @@ func presentAlert(title: String, message: String, imageName: String? = nil, comp
             completion?()
         })
         Task { @MainActor in
-            rootVC.present(alert, animated: true)
+            topVC.present(alert, animated: true)
         }
     }
 }
