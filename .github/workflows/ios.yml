@@ -1,0 +1,287 @@
+name: Build iOS IPA
+
+# Builds an UNSIGNED Meliora.ipa on a GitHub macOS runner (no Mac needed).
+# Sign/install it afterwards with your own Apple ID via AltStore, SideStore,
+# Sideloadly, Plume Impactor, etc.  Two variants are produced:
+#   Meliora-<ver>-...ipa              Increased Memory Limit (works with free accounts)
+#   Meliora-<ver>-...-extended-va.ipa + Extended Virtual Addressing (paid account / TrollStore)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**/*.md", "docs/**", ".github/ISSUE_TEMPLATE/**"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**", ".github/ISSUE_TEMPLATE/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  PROJECT: src/MeloNX/MeloNX.xcodeproj
+  SCHEME: MeloNX
+  BUNDLE_ID: com.meliora.app
+  DYLIB_DIR: src/MeloNX/MeloNX/Dependencies/Dynamic Libraries
+
+jobs:
+  build:
+    name: Build IPA (macos-26, Xcode 26)
+    runs-on: macos-26
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard - prebuilt libraries are real binaries
+        run: |
+          set -euo pipefail
+          # 1. No Git LFS pointer files (text stubs) may sneak into Dependencies.
+          if grep -rIl -m1 "git-lfs.github.com/spec/v1" src/MeloNX/MeloNX/Dependencies; then
+            echo "::error::Git LFS pointer files found above. Commit the real binaries instead."
+            exit 1
+          fi
+          # 2. Known-good checksums for libMoltenVK / libavcodec / libavutil.
+          #    When you intentionally update one of them, regenerate this file:
+          #    shasum -a 256 "<path>" > distribution/ios/prebuilt.sha256
+          shasum -a 256 -c distribution/ios/prebuilt.sha256
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: build/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('src/MeloNX/MeloNX.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: Toolchain info
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          dotnet --info | head -n 20
+
+      - name: Install ldid (embeds entitlements into the unsigned build)
+        run: brew install ldid
+
+      - name: Point in-app links to this repository
+        run: |
+          # ContentView.swift ships a placeholder; replace it with the repo running this workflow.
+          sed -i '' "s#YOUR_GITHUB_USER/Meliora#${GITHUB_REPOSITORY}#g" \
+            src/MeloNX/MeloNX/App/UI/Main/Home/ContentView.swift
+
+      - name: Build emulator core (.NET NativeAOT, ios-arm64)
+        run: |
+          set -euo pipefail
+          mkdir -p build/out
+          chmod +x distribution/ios/*.sh
+          # Make sure the Xcode script phases use the dotnet we just installed.
+          echo "MELIORA_DOTNET=$(command -v dotnet)" >> "$GITHUB_ENV"
+          export MELIORA_DOTNET="$(command -v dotnet)"
+          ./distribution/ios/xc-compile.sh 2>&1 | tee build/core-build.log
+
+      - name: Stage emulator core into the Xcode project
+        run: |
+          set -euo pipefail
+          BIN=src/Ryujinx.Headless.SDL2/bin/Release/net8.0/ios-arm64
+          SRC=""
+          # Xcode's own script phase uses publish/, the helper script uses native/.
+          for p in "$BIN/publish/Ryujinx.Headless.SDL2.dylib" "$BIN/native/Ryujinx.Headless.SDL2.dylib"; do
+            if [ -f "$p" ]; then SRC="$p"; break; fi
+          done
+          if [ -z "$SRC" ]; then
+            echo "::error::Ryujinx.Headless.SDL2.dylib was not produced. Contents of $BIN:"
+            find "$BIN" -maxdepth 2 | head -n 60
+            exit 1
+          fi
+          lipo -info "$SRC" | tee /dev/stderr | grep -q arm64 || { echo "::error::core is not arm64"; exit 1; }
+          [ "$(stat -f%z "$SRC")" -gt 10000000 ] || { echo "::error::core dylib is suspiciously small"; exit 1; }
+          # The app calls these Meliora functions; make sure NativeAOT kept them.
+          for sym in meliora_memory_configure meliora_memory_report meliora_memory_trim meliora_save_caches; do
+            nm -gU "$SRC" | grep -q " _${sym}\$" || { echo "::error::core does not export $sym"; exit 1; }
+          done
+          # Copy (not move) so Xcode's later `mv` from publish/ still finds its file.
+          cp "$SRC" "$DYLIB_DIR/Ryujinx.Headless.SDL2.dylib"
+          ls -l "$DYLIB_DIR"/*.dylib
+
+      - name: Build app (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            -clonedSourcePackagesDirPath build/SourcePackages \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation -skipPackagePluginValidation \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            2>&1 | tee build/xcodebuild.log
+
+      - name: Package IPAs
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)"
+          [ -d "$APP_PATH" ] || { echo "::error::No .app produced"; exit 1; }
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_PATH/Info.plist")"
+          EXEC="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")"
+          BASE="Meliora-${VERSION}-b${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          echo "IPA_BASE=$BASE" >> "$GITHUB_ENV"
+
+          # get-task-allow is REQUIRED: the app refuses StikDebug JIT without it.
+          # Sideloaders re-sign the app and keep/merge these entitlements.
+          write_ent() { # $1 = file, $2 = 1 to include extended virtual addressing
+            {
+              echo '<?xml version="1.0" encoding="UTF-8"?>'
+              echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+              echo '<plist version="1.0"><dict>'
+              echo '<key>get-task-allow</key><true/>'
+              echo '<key>com.apple.developer.kernel.increased-memory-limit</key><true/>'
+              if [ "$2" = "1" ]; then
+                echo '<key>com.apple.developer.kernel.extended-virtual-addressing</key><true/>'
+              fi
+              echo '</dict></plist>'
+            } > "$1"
+          }
+          write_ent build/ent-standard.plist 0
+          write_ent build/ent-extended.plist 1
+
+          make_ipa() { # $1 = output name, $2 = entitlements plist
+            local stage app
+            stage="$(mktemp -d)"
+            mkdir -p "$stage/Payload"
+            cp -R "$APP_PATH" "$stage/Payload/"
+            app="$stage/Payload/$(basename "$APP_PATH")"
+            # Drop leftover third-party signatures; the sideloader signs everything again.
+            find "$app" -name _CodeSignature -type d -prune -exec rm -rf {} +
+            while IFS= read -r -d '' f; do
+              if file -b "$f" | grep -q 'Mach-O'; then
+                codesign --remove-signature "$f" 2>/dev/null || true
+              fi
+            done < <(find "$app" -type f -print0)
+            ldid -S"$2" "$app/$EXEC"
+            ( cd "$stage" && zip -qry "$GITHUB_WORKSPACE/build/out/$1" Payload )
+            rm -rf "$stage"
+          }
+          make_ipa "${BASE}.ipa" build/ent-standard.plist
+          make_ipa "${BASE}-extended-va.ipa" build/ent-extended.plist
+          ls -lh build/out
+
+      - name: Verify IPAs
+        run: |
+          set -euo pipefail
+          for ipa in build/out/*.ipa; do
+            echo "::group::$(basename "$ipa")"
+            d="$(mktemp -d)"
+            unzip -q "$ipa" -d "$d"
+            app="$(ls -d "$d"/Payload/*.app)"
+            exec_name="$(plutil -extract CFBundleExecutable raw -o - "$app/Info.plist")"
+
+            [ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Info.plist")" = "$BUNDLE_ID" ] \
+              || { echo "::error::Unexpected bundle id"; exit 1; }
+            echo "Display name: $(plutil -extract CFBundleDisplayName raw -o - "$app/Info.plist" 2>/dev/null || echo '(none)')"
+            echo "Version: $(plutil -extract CFBundleShortVersionString raw -o - "$app/Info.plist") ($(plutil -extract CFBundleVersion raw -o - "$app/Info.plist"))"
+
+            for lib in Ryujinx.Headless.SDL2 libMoltenVK libavcodec libavutil; do
+              f="$app/Frameworks/$lib.dylib"
+              [ -f "$f" ] || { echo "::error::Missing Frameworks/$lib.dylib in IPA"; exit 1; }
+              lipo -info "$f" | grep -q arm64 || { echo "::error::$lib is not arm64"; exit 1; }
+              if grep -aq "git-lfs.github.com/spec" "$f"; then echo "::error::$lib is an LFS pointer"; exit 1; fi
+            done
+            lipo -info "$app/$exec_name" | grep -q arm64 || { echo "::error::main binary is not arm64"; exit 1; }
+
+            ents="$(ldid -e "$app/$exec_name")"
+            echo "$ents" | grep -q 'get-task-allow' || { echo "::error::get-task-allow missing"; exit 1; }
+            echo "$ents" | grep -q 'increased-memory-limit' || { echo "::error::increased-memory-limit missing"; exit 1; }
+            case "$ipa" in
+              *-extended-va.ipa) echo "$ents" | grep -q 'extended-virtual-addressing' || { echo "::error::extended-va missing"; exit 1; } ;;
+            esac
+            echo "Entitlements OK"
+            echo "::endgroup::"
+            rm -rf "$d"
+          done
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Meliora build"
+            echo
+            if ls build/out/*.ipa >/dev/null 2>&1; then
+              echo "| File | Size | SHA-256 |"
+              echo "|---|---|---|"
+              for f in build/out/*.ipa; do
+                echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) | \`$(shasum -a 256 "$f" | cut -d' ' -f1)\` |"
+              done
+              echo
+              echo "Unsigned IPAs: sign and install them with your own Apple ID (AltStore, SideStore, Sideloadly, Plume Impactor)."
+            else
+              echo "No IPA was produced. Download the \`build-logs\` artifact for details."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPAs
+        uses: actions/upload-artifact@v4
+        with:
+          name: meliora-ipa
+          path: build/out/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download IPAs
+        uses: actions/download-artifact@v4
+        with:
+          name: meliora-ipa
+          path: out
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PRE=""
+          # Tags with a suffix (v0.1.0-beta1) and all 0.x.y versions are published as pre-releases.
+          case "$GITHUB_REF_NAME" in *-*|v0.*) PRE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" out/*.ipa \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Meliora $GITHUB_REF_NAME" \
+            --generate-notes $PRE

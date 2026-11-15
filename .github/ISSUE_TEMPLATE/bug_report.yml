@@ -1,0 +1,73 @@
+name: Bug report
+description: Something crashes, freezes or looks wrong in Meliora
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Meliora is an **unofficial** fork. Please do not report Meliora problems to the MeloNX or Ryujinx teams.
+        Issues asking for games, keys or firmware will be closed. Use only files dumped from your own console.
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I read the README and enabled JIT before launching the game.
+          required: true
+        - label: This game was dumped from my own console and I use my own keys/firmware.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Meliora version
+      description: Settings, or the IPA file name (for example Meliora-2.4.5-b12-abc1234).
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      placeholder: iPhone 15 Pro, iOS 26.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How was it installed?
+      options:
+        - AltStore / SideStore
+        - Sideloadly
+        - Plume Impactor
+        - TrollStore
+        - Paid developer account (Xcode)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: jit
+    attributes:
+      label: How was JIT enabled?
+      options:
+        - StikDebug
+        - Debugger attached from Xcode
+        - Other
+        - JIT is not enabled
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game and title ID
+      placeholder: Game name (0100XXXXXXXXXXXX)
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, what you got, and steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Open the in-app Logs view, share the latest log and paste it here (or attach the file).
+      render: shell

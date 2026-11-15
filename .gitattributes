@@ -1,0 +1,10 @@
+# Normalize line endings for text files.
+* text=auto eol=lf
+
+# Binaries are stored as-is (no Git LFS: every file is far below GitHub's 100 MB limit).
+*.dylib binary
+*.a binary
+*.png binary
+*.jpg binary
+*.mp3 binary
+*.car binary

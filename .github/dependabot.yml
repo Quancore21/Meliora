@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keeps the actions used by ios.yml up to date (pinned major versions go stale).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
