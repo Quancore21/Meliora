@@ -51,6 +51,9 @@ struct SettingsViewNew: View {
     private let totalMemory = ProcessInfo.processInfo.physicalMemory
     
     @AppStorage(MelioraGovernor.enabledKey) private var melioraMemoryGovernor: Bool = true
+    @AppStorage("melioraThreadQoS") private var melioraThreadQoS: Bool = true
+    @AppStorage("melioraMvkPrefillCmdBuffers") private var melioraMvkPrefillCmdBuffers: Bool = false
+    @AppStorage("melioraMvkShaderCompression") private var melioraMvkShaderCompression: Bool = false
     
     private var filteredMemoryModes: [(String, String)] {
         guard !searchText.isEmpty else { return memoryManagerModes }
@@ -829,6 +832,7 @@ struct SettingsViewNew: View {
         SettingsSection(title: "Advanced Options") {
             debugOptionsCard
             advancedTogglesCard
+            melioraExperimentalCard
             memoryHacksCard
             additionalArgsCard
             systemInfoCard
@@ -887,6 +891,20 @@ struct SettingsViewNew: View {
         }
     }
     
+    // MARK: - Meliora Experimental
+
+    private var melioraExperimentalCard: some View {
+        SettingsCard {
+            VStack(spacing: 4) {
+                SettingsToggle(isOn: $melioraThreadQoS, icon: "cpu", label: "Thread QoS Scheduling", infoMessage: "Tags emulator threads with iOS quality-of-service classes, so the scheduler keeps the render loop and the game's main thread on the fast CPU cores instead of background jobs (counter queries, disk cache writes, JIT).\n\nMakes the biggest difference on base iPhones with 2 performance cores.\n\nTakes effect the next time a game starts.\n\nLeave ON if unsure.")
+                Divider()
+                SettingsToggle(isOn: $melioraMvkPrefillCmdBuffers, icon: "square.stack.3d.up.fill", label: "MVK: Prefill Metal Command Buffers", infoMessage: "Lets MoltenVK prefill Metal command buffers, which can lower command encoding overhead on the GPU thread.\n\nExperimental: may increase memory use.\n\nTakes effect the next time a game starts.")
+                Divider()
+                SettingsToggle(isOn: $melioraMvkShaderCompression, icon: "doc.zipper", label: "MVK: Shader Compression", infoMessage: "Compresses MoltenVK's pipeline cache data with zlib, saving disk space at the cost of some CPU time when the cache is written.\n\nExperimental: takes effect the next time a game starts.")
+            }
+        }
+    }
+
     private var memoryHacksCard: some View {
         SettingsCard {
             VStack(spacing: 4) {

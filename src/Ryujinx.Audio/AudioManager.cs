@@ -1,3 +1,4 @@
+using Ryujinx.Common.SystemInterop;
 using System;
 using System.Threading;
 
@@ -83,6 +84,8 @@ namespace Ryujinx.Audio
         /// </summary>
         private void Update()
         {
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.Audio);
+
             while (_isRunning)
             {
                 int index = WaitHandle.WaitAny(_updateRequiredEvents);

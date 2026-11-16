@@ -27,6 +27,11 @@ final class MelioraGovernor {
     private var headroom: Int64 = 768 * 1024 * 1024
     private var lastTrim = Date.distantPast
 
+    // FPS samples for the 10-second log window (accessed on the governor queue only).
+    private var fpsSum = 0.0
+    private var fpsMin = Double.greatestFiniteMagnitude
+    private var fpsCount = 0
+
     private let tickInterval: TimeInterval = 0.5
     private let logEveryTicks = 20        // every 10 seconds
     private let saveEveryTicks = 1200     // every 10 minutes
@@ -54,6 +59,10 @@ final class MelioraGovernor {
     }
 
     private func startOnQueue() {
+        fpsSum = 0
+        fpsMin = Double.greatestFiniteMagnitude
+        fpsCount = 0
+
         guard !running else {
             // A new game started in the same app session: apply the current setting again.
             SN_meliora_memory_configure(isEnabled ? 1 : 0, headroom)
@@ -119,6 +128,14 @@ final class MelioraGovernor {
 
         let available = Int64(os_proc_available_memory())
 
+        // Sample FPS on every tick so logStatus can report min/avg over its window.
+        let currentFps = Double(SN_get_current_fps())
+        fpsSum += currentFps
+        fpsCount += 1
+        if currentFps < fpsMin {
+            fpsMin = currentFps
+        }
+
         if isEnabled && available > 0 {
             SN_meliora_memory_report(available)
 
@@ -162,7 +179,15 @@ final class MelioraGovernor {
         let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         let fps = SN_get_current_fps()
 
-        print("[Meliora] mem footprint=\(footprint / 1_048_576)MB available=\(available / 1_048_576)MB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps)")
+        let avgFps = fpsCount > 0 ? fpsSum / Double(fpsCount) : 0
+        let minFps = fpsCount > 0 ? fpsMin : 0
+
+        print("[Meliora] mem footprint=\(footprint / 1_048_576)MB available=\(available / 1_048_576)MB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
+
+        // Start a new 10-second window.
+        fpsSum = 0
+        fpsMin = Double.greatestFiniteMagnitude
+        fpsCount = 0
     }
 
     // MARK: - Background

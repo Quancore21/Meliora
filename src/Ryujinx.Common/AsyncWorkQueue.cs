@@ -1,3 +1,4 @@
+using Ryujinx.Common.SystemInterop;
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
@@ -32,6 +33,10 @@ namespace Ryujinx.Common
 
         private void DoWork()
         {
+            // This queue runs the GPU disk cache writer and similar background jobs;
+            // keep it off the performance cores.
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.AsyncWork);
+
             try
             {
                 foreach (var item in _queue.GetConsumingEnumerable(_cts.Token))

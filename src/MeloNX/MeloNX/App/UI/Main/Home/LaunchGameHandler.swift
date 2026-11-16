@@ -128,6 +128,17 @@ class LaunchGameHandler: ObservableObject {
     }
     
     private func configureEnvironmentVariables() {
+        // Meliora experimental toggles (UserDefaults); also applied in
+        // MeloNXApp.setupEnvironment() before MoltenVK first initializes.
+        let threadQoS = UserDefaults.standard.object(forKey: "melioraThreadQoS") as? Bool ?? true
+        setenv("MELIORA_QOS", threadQoS ? "1" : "0", 1)
+
+        let mvkPrefill = UserDefaults.standard.bool(forKey: "melioraMvkPrefillCmdBuffers")
+        setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", mvkPrefill ? "1" : "0", 1)
+
+        let mvkCompression = UserDefaults.standard.bool(forKey: "melioraMvkShaderCompression")
+        setenv("MVK_CONFIG_SHADER_COMPRESSION_ALGORITHM", mvkCompression ? "4" : "0", 1)
+
         let useDualMappedJIT: Bool
         if #available(iOS 19, *) {
             useDualMappedJIT = nativeSettings.setting(forKey: "DUAL_MAPPED_JIT", default: true).value

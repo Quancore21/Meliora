@@ -1,4 +1,5 @@
 using OpenTK.Graphics.OpenGL;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
 using System;
 using System.Collections.Generic;
@@ -48,6 +49,8 @@ namespace Ryujinx.Graphics.OpenGL.Queries
 
         private void EventConsumer()
         {
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.CounterQueue);
+
             while (!Disposed)
             {
                 CounterQueueEvent evt = null;

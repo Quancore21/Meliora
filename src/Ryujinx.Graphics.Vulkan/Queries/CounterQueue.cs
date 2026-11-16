@@ -1,3 +1,4 @@
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
 using Silk.NET.Vulkan;
 using System;
@@ -85,6 +86,8 @@ namespace Ryujinx.Graphics.Vulkan.Queries
 
         private void EventConsumer()
         {
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.CounterQueue);
+
             while (!Disposed)
             {
                 CounterQueueEvent evt = null;

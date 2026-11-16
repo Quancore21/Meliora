@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Shader;
 using Ryujinx.Graphics.Shader.Translation;
@@ -533,6 +534,11 @@ namespace Ryujinx.Graphics.Gpu.Shader.DiskCache
         /// <param name="state">Cancellation token</param>
         private void ProcessAsyncQueue(object state)
         {
+            // These threads burn through shader translation while the game loads; run
+            // them at UserInitiated so shader cache loading stays fast without stealing
+            // the UserInteractive slots from the render and game threads.
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.DiskCacheLoader);
+
             CancellationToken ct = (CancellationToken)state;
 
             try

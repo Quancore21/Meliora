@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.3 (thread scheduling + experimental options)
+
+Performance pass aimed at base iPhones (2 performance + 4 efficiency cores): explicit CPU thread scheduling instead of QOS_CLASS_DEFAULT everywhere, faster shader cache loading, experimental MoltenVK toggles, and min/avg FPS in the periodic log.
+
+### Added
+
+- **Thread QoS scheduling (`MELIORA_QOS=1`, on by default).** New `ThreadQoS` helper (`Ryujinx.Common.SystemInterop`) tags emulator threads with Darwin QoS classes via `pthread_set_qos_class_self_np` on iOS/macOS:
+  - `GPU.MainThread` and the first guest thread of a process (the game's main thread) get `UserInteractive (0x21)` — at most `hw.perflevel0.physicalcpu` threads ever hold that class, further requests downgrade to `UserInitiated`.
+  - The backend render loop that drives MoltenVK gets `UserInitiated (0x19)` on 2-P-core devices, `UserInteractive` when there are more than 2 performance cores; all other guest/HLE kernel threads, the SurfaceFlinger composer and the audio manager thread run at `UserInitiated`.
+  - Background work (GPU counter queues, `AsyncWorkQueue` disk cache writer, background JIT translation) is pushed to `Utility (0x11)` so it stops stealing performance cores.
+  - Without this, the scheduler regularly ran background jobs on the 2 fast cores while the render loop or the game's main thread was bounced to the efficiency cores, showing up as hard framerate drops.
+  - SurfaceFlinger no longer sets `ThreadPriority.AboveNormal` while QoS is active: .NET's managed priority calls `pthread_setschedparam` on Darwin, which locks the thread policy and makes `pthread_set_qos_class_self_np` fail with `EINVAL` afterwards.
+- **Shader cache loading.** The 8 parallel `ParallelDiskCacheLoader` translation threads now run at `UserInitiated (0x19)` instead of the default class, so shader cache loading stays fast without stealing the interactive slots.
+- **Experimental settings card** (Advanced Options) with three toggles:
+  - *Thread QoS Scheduling* (`melioraThreadQoS`, default ON) — sets `MELIORA_QOS`.
+  - *MVK: Prefill Metal Command Buffers* (`melioraMvkPrefillCmdBuffers`, default OFF) — sets `MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS` to `1`/`0`; also mirrored into `vkSetMoltenVKConfigurationMVK` in `MVKInitialization.Initialize()` so it applies even after MoltenVK has already loaded.
+  - *MVK: Shader Compression* (`melioraMvkShaderCompression`, default OFF) — sets `MVK_CONFIG_SHADER_COMPRESSION_ALGORITHM` to `4` (zlib)/`0` (none).
+  - All three are applied at app start (`MeloNXApp.setupEnvironment`) and re-applied per game launch (`LaunchGameHandler.configureEnvironmentVariables`).
+- **FPS telemetry.** The 10-second `[Meliora] mem ...` governor log now also reports `avgFps` and `minFps` sampled every 0.5 s over the window, to make stutter visible in logs.
+
 ## 0.0.2 (JIT launch fix)
 
 Fixes the launch hang on iOS 26/27 (TXM) devices with StikDebug 3.2.x: the game stuck on the `Loading ...` overlay (FPS 0.00) because JIT was never correctly enabled.

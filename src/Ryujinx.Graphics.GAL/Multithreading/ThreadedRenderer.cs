@@ -1,5 +1,6 @@
 using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL.Multithreading.Commands;
 using Ryujinx.Graphics.GAL.Multithreading.Commands.Buffer;
 using Ryujinx.Graphics.GAL.Multithreading.Commands.Renderer;
@@ -74,6 +75,10 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
         public ThreadedRenderer(IRenderer renderer)
         {
+            // New emulation session: reset the QoS slot accounting (which thread holds
+            // the UserInteractive slots and which guest thread is the game's main one).
+            ThreadQoS.ResetSession();
+
             _baseRenderer = renderer;
 
             renderer.ScreenCaptured += (sender, info) => ScreenCaptured?.Invoke(this, info);
@@ -103,7 +108,13 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
             _backendThread = Thread.CurrentThread;
 
-            _gpuThread = new Thread(gpuLoop)
+            _gpuThread = new Thread(() =>
+            {
+                // First line on the GPU thread: put it on a performance core.
+                ThreadQoS.SetCurrentThreadQoS(QoSRole.GpuMain);
+
+                gpuLoop();
+            })
             {
                 Name = "GPU.MainThread",
             };
@@ -115,6 +126,11 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
         public void RenderLoop()
         {
+            // Tag the backend thread that drives MoltenVK. With only two performance
+            // cores both UserInteractive slots belong to GPU.MainThread and the game's
+            // main thread, so this thread runs at UserInitiated instead.
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.RenderLoop);
+
             // Power through the render queue until the Gpu thread work is done.
 
             while (_running)

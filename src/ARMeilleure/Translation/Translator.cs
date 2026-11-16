@@ -10,6 +10,7 @@ using ARMeilleure.State;
 using ARMeilleure.Translation.Cache;
 using ARMeilleure.Translation.PTC;
 using Ryujinx.Common;
+using Ryujinx.Common.SystemInterop;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -309,6 +310,9 @@ namespace ARMeilleure.Translation
 
         private void BackgroundTranslate()
         {
+            // Background rejit work: keep it off the performance cores.
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.BackgroundTranslate);
+
             while (_threadCount != 0 && Queue.TryDequeue(out RejitRequest request))
             {
                 TranslatedFunction func = Translate(request.Address, request.Mode, highCq: true);

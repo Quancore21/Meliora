@@ -31,6 +31,14 @@ namespace Ryujinx.Graphics.Vulkan.MoltenVK
 
             config.ResumeLostDevice = true;
 
+            // Mirror MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS (set by the app's
+            // "MVK: Prefill Metal Command Buffers" settings toggle). MoltenVK only reads
+            // the environment the first time its dylib loads, so applying the value here
+            // as well keeps the toggle effective between game launches even after
+            // MoltenVK has already initialized.
+            string prefill = Environment.GetEnvironmentVariable("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS");
+            config.PrefillMetalCommandBuffers = prefill == "1";
+
             vkSetMoltenVKConfigurationMVK(IntPtr.Zero, config, configSize);
         }
 

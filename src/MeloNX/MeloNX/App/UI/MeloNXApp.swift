@@ -100,7 +100,20 @@ struct MeloNXApp: View {
         environment.forEach { env in
             env.set()
         }
-        
+
+        // Meliora experimental toggles (UserDefaults). MoltenVK reads its config when it
+        // initializes, so these are also re-applied per game launch in LaunchGameHandler.
+        let threadQoS = UserDefaults.standard.object(forKey: "melioraThreadQoS") as? Bool ?? true
+        setenv("MELIORA_QOS", threadQoS ? "1" : "0", 1)
+
+        // In MoltenVK "0" means NO_PREFILL, "1" enables prefilling.
+        let mvkPrefill = UserDefaults.standard.bool(forKey: "melioraMvkPrefillCmdBuffers")
+        setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", mvkPrefill ? "1" : "0", 1)
+
+        // "4" is ZLIB, "0" is None.
+        let mvkCompression = UserDefaults.standard.bool(forKey: "melioraMvkShaderCompression")
+        setenv("MVK_CONFIG_SHADER_COMPRESSION_ALGORITHM", mvkCompression ? "4" : "0", 1)
+
         EnvironmentVariable(string: "HAS_TXM", value: ProcessInfo.processInfo.hasTXM && !ProcessInfo.processInfo.isiOSAppOnMac ? "1" : "0").set()
 
         RyujinxBridge.initialize()

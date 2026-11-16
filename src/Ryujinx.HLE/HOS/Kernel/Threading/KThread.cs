@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Cpu;
 using Ryujinx.HLE.HOS.Kernel.Common;
 using Ryujinx.HLE.HOS.Kernel.Process;
@@ -1247,6 +1248,15 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
 
         private void ThreadStart()
         {
+            // Tag the host thread before anything else. The first real guest thread of a
+            // process (the game's main thread) competes for a UserInteractive slot next
+            // to GPU.MainThread; every other guest or HLE kernel thread runs at
+            // UserInitiated instead of QOS_CLASS_DEFAULT.
+            ThreadQoS.SetCurrentThreadQoS(
+                _customThreadStart == null && Owner != null && ThreadQoS.ClaimGameMainThread()
+                    ? QoSRole.GameMainThread
+                    : QoSRole.GuestThread);
+
             _schedulerWaitEvent.WaitOne();
             KernelStatic.SetKernelContext(KernelContext, this);
 

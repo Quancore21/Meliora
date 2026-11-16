@@ -2,6 +2,7 @@ using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Logging;
 using Ryujinx.Common.PreciseSleep;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Gpu;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvMap;
@@ -64,8 +65,16 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
             _composerThread = new Thread(HandleComposition, 4096 * 2)
             {
                 Name = "SurfaceFlinger.Composer",
-                Priority = ThreadPriority.AboveNormal
             };
+
+            // .NET's Thread.Priority calls pthread_setschedparam on Darwin, which locks
+            // the thread's scheduler policy and makes pthread_set_qos_class_self_np fail
+            // with EINVAL later. While QoS is active, skip the managed priority and tag
+            // the thread with a QoS class in HandleComposition instead.
+            if (!ThreadQoS.Enabled)
+            {
+                _composerThread.Priority = ThreadPriority.AboveNormal;
+            }
 
             _ticks = 0;
             _spinTicks = Stopwatch.Frequency / 500;
@@ -295,6 +304,8 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
 
         private void HandleComposition()
         {
+            ThreadQoS.SetCurrentThreadQoS(QoSRole.Composer);
+
             _isRunning = true;
 
             long lastTicks = PerformanceCounter.ElapsedTicks;
