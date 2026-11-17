@@ -35,7 +35,7 @@ jobs:
   build:
     name: Build IPA (macos-26, Xcode 26)
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -276,7 +276,13 @@ jobs:
           # Tags with a suffix (v0.1.0-beta1) are published as pre-releases.
           # Plain vX.Y.Z tags — including 0.x — are stable releases.
           case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" out/*.ipa \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Meliora $GITHUB_REF_NAME" \
-            --generate-notes $PRE
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A re-run of a tag build: refresh the assets instead of failing
+            # because the release already exists.
+            gh release upload "$GITHUB_REF_NAME" out/*.ipa --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/*.ipa \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Meliora $GITHUB_REF_NAME" \
+              --generate-notes $PRE
+          fi

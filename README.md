@@ -77,7 +77,7 @@ Advanced environment overrides for experiments and A/B testing: `MELIORA_ADAPTIV
 
 ## Reporting performance problems
 
-Meliora writes `[Meliora] mem ...` (every 10 s: memory footprint, memory still available, thermal state, FPS), `[Meliora] adaptive ...` (controller decisions) and `[Meliora] gpu ...` (effective configuration, once per session) to its log. When a game lags or crashes, open the in-app log and attach those lines to your issue. They show whether the cause is memory, heat, CPU or GPU.
+Meliora writes `[Meliora] mem ...` (every 10 s: memory footprint, memory still available, thermal state, FPS), `[Meliora] adaptive ...` (controller decisions) and `[Meliora] gpu ...` (effective configuration, once per session) to its log. When a game lags or crashes, open the in-app log and attach those lines to your issue. They show whether the cause is memory, heat, CPU or GPU. A step-by-step guide for comparing releases lives in [docs/TESTING.md](docs/TESTING.md).
 
 ## Build it yourself
 
