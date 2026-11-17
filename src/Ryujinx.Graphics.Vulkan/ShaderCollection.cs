@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
 using Silk.NET.Vulkan;
 using System;
@@ -527,44 +528,54 @@ namespace Ryujinx.Graphics.Vulkan
 
         public void CreateBackgroundComputePipeline()
         {
-            PipelineState pipeline = new();
-            pipeline.Initialize();
+            // Meliora: pipeline compilation competes with the game for CPU time; run it
+            // at a boosted QoS instead of the scheduler default.
+            ThreadQoS.RunWithRole(QoSRole.ShaderCompile, () =>
+            {
+                PipelineState pipeline = new();
+                pipeline.Initialize();
 
-            pipeline.Stages[0] = _shaders[0].GetInfo();
-            pipeline.StagesCount = 1;
-            pipeline.PipelineLayout = PipelineLayout;
+                pipeline.Stages[0] = _shaders[0].GetInfo();
+                pipeline.StagesCount = 1;
+                pipeline.PipelineLayout = PipelineLayout;
 
-            pipeline.CreateComputePipeline(_gd, _device, this, (_gd.Pipeline as PipelineBase).PipelineCache);
-            pipeline.Dispose();
+                pipeline.CreateComputePipeline(_gd, _device, this, (_gd.Pipeline as PipelineBase).PipelineCache);
+                pipeline.Dispose();
+            });
         }
 
         public void CreateBackgroundGraphicsPipeline()
         {
-            // To compile shaders in the background in Vulkan, we need to create valid pipelines using the shader modules.
-            // The GPU provides pipeline state via the GAL that can be converted into our internal Vulkan pipeline state.
-            // This should match the pipeline state at the time of the first draw. If it doesn't, then it'll likely be
-            // close enough that the GPU driver will reuse the compiled shader for the different state.
-
-            // First, we need to create a render pass object compatible with the one that will be used at runtime.
-            // The active attachment formats have been provided by the abstraction layer.
-            var renderPass = CreateDummyRenderPass();
-
-            PipelineState pipeline = _state.ToVulkanPipelineState(_gd);
-
-            // Copy the shader stage info to the pipeline.
-            var stages = pipeline.Stages.AsSpan();
-
-            for (int i = 0; i < _shaders.Length; i++)
+            // Meliora: pipeline compilation competes with the game for CPU time; run it
+            // at a boosted QoS instead of the scheduler default.
+            ThreadQoS.RunWithRole(QoSRole.ShaderCompile, () =>
             {
-                stages[i] = _shaders[i].GetInfo();
-            }
+                // To compile shaders in the background in Vulkan, we need to create valid pipelines using the shader modules.
+                // The GPU provides pipeline state via the GAL that can be converted into our internal Vulkan pipeline state.
+                // This should match the pipeline state at the time of the first draw. If it doesn't, then it'll likely be
+                // close enough that the GPU driver will reuse the compiled shader for the different state.
 
-            pipeline.HasTessellationControlShader = HasTessellationControlShader;
-            pipeline.StagesCount = (uint)_shaders.Length;
-            pipeline.PipelineLayout = PipelineLayout;
+                // First, we need to create a render pass object compatible with the one that will be used at runtime.
+                // The active attachment formats have been provided by the abstraction layer.
+                var renderPass = CreateDummyRenderPass();
 
-            pipeline.CreateGraphicsPipeline(_gd, _device, this, (_gd.Pipeline as PipelineBase).PipelineCache, renderPass.Value, throwOnError: true);
-            pipeline.Dispose();
+                PipelineState pipeline = _state.ToVulkanPipelineState(_gd);
+
+                // Copy the shader stage info to the pipeline.
+                var stages = pipeline.Stages.AsSpan();
+
+                for (int i = 0; i < _shaders.Length; i++)
+                {
+                    stages[i] = _shaders[i].GetInfo();
+                }
+
+                pipeline.HasTessellationControlShader = HasTessellationControlShader;
+                pipeline.StagesCount = (uint)_shaders.Length;
+                pipeline.PipelineLayout = PipelineLayout;
+
+                pipeline.CreateGraphicsPipeline(_gd, _device, this, (_gd.Pipeline as PipelineBase).PipelineCache, renderPass.Value, throwOnError: true);
+                pipeline.Dispose();
+            });
         }
 
         public ProgramLinkStatus CheckProgramLink(bool blocking)

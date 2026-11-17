@@ -536,7 +536,7 @@ class Ryujinx : ObservableObject {
             args.append("--disable-docked-mode")
         }
         if config.enableTextureRecompression {
-            // args.append("--enable-texture-recompression")
+            args.append("--enable-texture-recompression")
         }
         
         if config.debuglogs {

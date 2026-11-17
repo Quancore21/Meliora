@@ -133,6 +133,16 @@ class LaunchGameHandler: ObservableObject {
         let threadQoS = UserDefaults.standard.object(forKey: "melioraThreadQoS") as? Bool ?? true
         setenv("MELIORA_QOS", threadQoS ? "1" : "0", 1)
 
+        // Meliora Adaptive Engine: closed-loop render scale, pacing target and live pacing.
+        let melioraAdaptive = UserDefaults.standard.object(forKey: "melioraAdaptive") as? Bool ?? true
+        setenv("MELIORA_ADAPTIVE", melioraAdaptive ? "1" : "0", 1)
+
+        let target30 = UserDefaults.standard.bool(forKey: "melioraTarget30")
+        setenv("MELIORA_TARGET_FPS", target30 ? "30" : "60", 1)
+
+        let melioraSmooth = UserDefaults.standard.bool(forKey: "melioraSmooth")
+        setenv("MELIORA_SMOOTH", melioraSmooth ? "1" : "0", 1)
+
         let mvkPrefill = UserDefaults.standard.bool(forKey: "melioraMvkPrefillCmdBuffers")
         setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", mvkPrefill ? "1" : "0", 1)
 

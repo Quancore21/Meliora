@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.4 (Meliora Adaptive Engine)
+
+The first closed-loop performance controller, built on the 0.0.3 baseline logs: Super Mario Odyssey on a pre-heated iPhone holds ~56-57 FPS average but dips to 32-45 FPS in heavy scenes with `ServiceNv Wait: GPU processing thread is too slow` warnings — GPU-bound under thermal throttling. This release attacks exactly that.
+
+### Added
+
+- **Adaptive render scale (`MELIORA_ADAPTIVE`, default ON).** New `AdaptivePerformance` controller hooked into the render loop (`WindowBase`). Every presented frame contributes its present-to-present interval to a 96-sample ring buffer; every ~1.6 s the controller evaluates the 95th percentile frame time against the pacing budget (target FPS, or the game's own median when it is lower — a game that steadily runs 30 FPS is not considered overloaded).
+  - Steps down only when frames are slow **and** the GPU thread is saturated (≥70% busy, measured directly around `ProcessFrame`), after 3 consecutive failing windows (~5 s), at most one step per 5 s: x0.95 → x0.90, floor x0.85 of the scale the game started with (never below 0.5x absolute).
+  - Steps back up after ~16 s of green windows, one step per 10 s, up to the starting scale — which is always the ceiling. Only `GraphicsConfig.ResScale` is written; no profile is touched.
+  - Slow frames with an idle GPU thread are logged as CPU-bound and deliberately ignored: lowering resolution cannot fix those.
+  - Warmup: the first ~5 s (shader cache load, JIT) are skipped so the controller never trips on startup storms.
+  - Every decision is logged as `[Meliora] adaptive: ...` with p95/median/budget/gpuBusy/scale.
+  - All controller state is reset at every game launch (`ResetSession`): a second game in the same app run gets its own warmup and scale capture, and the scale it starts with is the new ceiling — nothing leaks over from the previous session.
+- **Runtime frame pacing.** New `MelioraFramePacing` (single source of truth replacing the hard-coded 60): `MELIORA_TARGET_FPS` sets the composition target (15-240, default 60; the *Target 30 FPS* toggle sets 30). The target is re-read at every game launch, so the toggle applies to the next game without restarting the app. `MELIORA_SMOOTH=1` (*Smooth Pacing*) lets the composer follow a changed target at runtime; the toggle itself is not wired to live settings changes yet — the env is applied per game launch (planned for 0.0.5).
+- **Adaptive compositor spin.** `SurfaceFlinger` now tunes its spin threshold from the measured wake lateness of the nanosleep path (25% EMA per frame), clamped between 0.2 ms and the old 2 ms cap, instead of a fixed 2 ms guess. `MELIORA_SPIN_US` pins it for experiments.
+- **QoS for shader compilation.** New `ThreadQoS.RunWithRole` + `QoSRole.ShaderCompile` (`UserInitiated`): background shader module compilation (`Shader`) and background pipeline creation (`ShaderCollection.CreateBackground*Pipeline`) now run boosted and restore the default class afterwards, so the class cannot leak onto pool threads. The GPU thread stalls until a pipeline is ready, so compilation no longer competes with it from the E-core scheduling class.
+- **Effective GPU configuration log.** `[Meliora] gpu: ...` (once per session): renderer name, Vulkan version, memory type, TBDR flag, and the MoltenVK options actually in effect (read back from the dylib). Replaces the idea of an argument-buffers toggle — the device log proved Metal 3 argument buffers are already active, so there is nothing to toggle.
+- **Unified memory override (opt-in).** `MELIORA_UNIFIED_MEMORY=1` opts MoltenVK into the `UnifiedMemory` system memory type on Apple GPUs (default off; the effective choice is visible in the `[Meliora] gpu:` line).
+
+### Fixed
+
+- **Texture recompression toggle was dead.** `enableTextureRecompression` never produced the `--enable-texture-recompression` argument (it was commented out), so the per-game switch did nothing. The argument is now passed and the per-game toggle is live again.
+- **Idle MTKView display link.** The emulation `MTKView` has no delegate (the emulator presents through the CAMetalLayer itself), so its display link only burned wakeups — the view is now paused.
+
+### Changed
+
+- New settings toggles in Advanced Options: *Adaptive Resolution* (`melioraAdaptive`, ON), *Target 30 FPS* (`melioraTarget30`, OFF), *Smooth Pacing* (`melioraSmooth`, OFF). All are applied at app start and re-applied per game launch.
+
 ## 0.0.3 (thread scheduling + experimental options)
 
 Performance pass aimed at base iPhones (2 performance + 4 efficiency cores): explicit CPU thread scheduling instead of QOS_CLASS_DEFAULT everywhere, faster shader cache loading, experimental MoltenVK toggles, and min/avg FPS in the periodic log.

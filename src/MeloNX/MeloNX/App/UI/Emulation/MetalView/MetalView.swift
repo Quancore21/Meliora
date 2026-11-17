@@ -24,7 +24,11 @@ struct MetalView: UIViewRepresentable {
     static func createView() -> UIView {
         if Ryujinx.shared.emulationUIView == nil {
             let view = MeloMTKView()
-            
+
+            // Meliora: the emulator presents through the CAMetalLayer itself; MTKView's
+            // own display link has no delegate here and would only burn wakeups.
+            view.isPaused = true
+
             guard let metalLayer = view.layer as? CAMetalLayer else {
                 fatalError("[Swift] Error: MTKView's layer is not a CAMetalLayer")
             }

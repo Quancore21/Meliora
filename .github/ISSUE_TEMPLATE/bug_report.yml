@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: Meliora version
-      description: Settings, or the IPA file name (for example Meliora-2.4.5-b12-abc1234).
+      description: Settings, or the IPA file name (for example Meliora-0.0.4).
     validations:
       required: true
   - type: input

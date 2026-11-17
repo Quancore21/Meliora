@@ -42,6 +42,28 @@ namespace Ryujinx.Graphics.Vulkan.MoltenVK
             vkSetMoltenVKConfigurationMVK(IntPtr.Zero, config, configSize);
         }
 
+        /// <summary>
+        /// Meliora: reads back the MoltenVK configuration as it is now in effect and
+        /// formats the parts that matter for a game log. Called once per session by the
+        /// "[Meliora] gpu:" log in VulkanRenderer.
+        /// </summary>
+        public static string DescribeEffectiveOptions()
+        {
+            try
+            {
+                var configSize = (IntPtr)Marshal.SizeOf<MVKConfiguration>();
+
+                vkGetMoltenVKConfigurationMVK(IntPtr.Zero, out MVKConfiguration config, configSize);
+
+                return $", mvk: argBuffers={(config.UseMetalArgumentBuffers ? 1 : 0)} prefill={(config.PrefillMetalCommandBuffers ? 1 : 0)}";
+            }
+            catch
+            {
+                // Logging must never break renderer initialization.
+                return string.Empty;
+            }
+        }
+
         private static string[] Resolver(string path)
         {
             if (path.EndsWith(VulkanLib))

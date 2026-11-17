@@ -7,6 +7,7 @@ using Ryujinx.Graphics.Gpu;
 using Ryujinx.Graphics.OpenGL;
 using Ryujinx.HLE.HOS.Applets;
 using Ryujinx.HLE.HOS.Services.Am.AppletOE.ApplicationProxyService.ApplicationProxy.Types;
+using Ryujinx.HLE.HOS.Services.SurfaceFlinger;
 using Ryujinx.HLE.UI;
 using Ryujinx.Input;
 using Ryujinx.Input.HLE;
@@ -29,7 +30,6 @@ namespace Ryujinx.Headless.SDL2
     {
         protected const int DefaultWidth = 1280;
         protected const int DefaultHeight = 720;
-        private const int TargetFps = 60;
         private SDL_WindowFlags DefaultFlags = SDL_WindowFlags.SDL_WINDOW_ALLOW_HIGHDPI | SDL_WindowFlags.SDL_WINDOW_RESIZABLE | SDL_WindowFlags.SDL_WINDOW_INPUT_FOCUS | SDL_WindowFlags.SDL_WINDOW_SHOWN;
         private SDL_WindowFlags FullscreenFlag = 0;
 
@@ -73,7 +73,6 @@ namespace Ryujinx.Headless.SDL2
         private readonly IKeyboard _keyboardInterface;
         private readonly GraphicsDebugLevel _glLogLevel;
         private readonly Stopwatch _chrono;
-        private readonly long _ticksPerFrame;
         private readonly CancellationTokenSource _gpuCancellationTokenSource;
         public ManualResetEvent _exitEvent;
         public ManualResetEvent _gpuDoneEvent;
@@ -103,7 +102,6 @@ namespace Ryujinx.Headless.SDL2
             _keyboardInterface = (IKeyboard)_inputManager.KeyboardDriver.GetGamepad("0");
             _glLogLevel = glLogLevel;
             _chrono = new Stopwatch();
-            _ticksPerFrame = Stopwatch.Frequency / TargetFps;
             _gpuCancellationTokenSource = new CancellationTokenSource();
             _exitEvent = new ManualResetEvent(false);
             _gpuDoneEvent = new ManualResetEvent(false);
@@ -300,6 +298,11 @@ namespace Ryujinx.Headless.SDL2
 
             Device.Gpu.Renderer.RunLoop(() =>
             {
+                // Meliora: new emulation session — give the adaptive controller a clean
+                // slate so warmup and the scale ceiling belong to this game, not to a
+                // previous one started from the same app process.
+                AdaptivePerformance.ResetSession();
+
                 Device.Gpu.SetGpuThread();
                 Device.Gpu.InitializeShaderCache(_gpuCancellationTokenSource.Token);
 
@@ -316,16 +319,27 @@ namespace Ryujinx.Headless.SDL2
 
                     _chrono.Restart();
 
+                    long fifoBusyTicks = 0;
+                    int presented = 0;
+
                     if (Device.WaitFifo())
                     {
                         Device.Statistics.RecordFifoStart();
+
+                        long fifoStart = Stopwatch.GetTimestamp();
+
                         Device.ProcessFrame();
+
+                        fifoBusyTicks = Stopwatch.GetTimestamp() - fifoStart;
+
                         Device.Statistics.RecordFifoEnd();
                     }
 
                     while (Device.ConsumeFrameAvailable())
                     {
                         Device.PresentFrame(SwapBuffers);
+
+                        presented++;
 
                         if (firstFrame)
                         {
@@ -339,13 +353,17 @@ namespace Ryujinx.Headless.SDL2
                     // synchronized with pipeline creation.
                     Ryujinx.Graphics.Vulkan.PipelineCacheStorage.ProcessPendingSave();
 
-                    if (_ticks >= _ticksPerFrame)
+                    // Meliora: the adaptive engine watches every iteration to decide
+                    // whether the render scale should follow the load.
+                    AdaptivePerformance.OnIterationEnd(fifoBusyTicks, presented);
+
+                    if (_ticks >= MelioraFramePacing.TicksPerFrame)
                     {
                         string dockedMode = Device.System.State.DockedMode ? "Docked" : "Handheld";
                         float scale = GraphicsConfig.ResScale;
                         if (scale != 1)
                         {
-                            dockedMode += $" ({scale}x)";
+                            dockedMode += $" ({scale:0.00}x)";
                         }
 
                         StatusUpdatedEvent?.Invoke(this, new StatusUpdatedEventArgs(
@@ -356,7 +374,8 @@ namespace Ryujinx.Headless.SDL2
                             $"FIFO: {Device.Statistics.GetFifoPercent():0.00} %",
                             $"GPU: {_gpuDriverName}"));
 
-                        _ticks = Math.Min(_ticks - _ticksPerFrame, _ticksPerFrame);
+                        long ticksPerFrame = MelioraFramePacing.TicksPerFrame;
+                        _ticks = Math.Min(_ticks - ticksPerFrame, ticksPerFrame);
                     }
                 }
 

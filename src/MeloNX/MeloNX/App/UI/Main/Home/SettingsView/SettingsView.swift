@@ -53,6 +53,9 @@ struct SettingsViewNew: View {
     @AppStorage(MelioraGovernor.enabledKey) private var melioraMemoryGovernor: Bool = true
     @AppStorage("melioraThreadQoS") private var melioraThreadQoS: Bool = true
     @AppStorage("melioraMvkPrefillCmdBuffers") private var melioraMvkPrefillCmdBuffers: Bool = false
+    @AppStorage("melioraAdaptive") private var melioraAdaptive: Bool = true
+    @AppStorage("melioraTarget30") private var melioraTarget30: Bool = false
+    @AppStorage("melioraSmooth") private var melioraSmooth: Bool = false
     @AppStorage("melioraMvkShaderCompression") private var melioraMvkShaderCompression: Bool = false
     
     private var filteredMemoryModes: [(String, String)] {
@@ -896,6 +899,12 @@ struct SettingsViewNew: View {
     private var melioraExperimentalCard: some View {
         SettingsCard {
             VStack(spacing: 4) {
+                SettingsToggle(isOn: $melioraAdaptive, icon: "arrow.down.forward.circle", label: "Adaptive Resolution", infoMessage: "Watches real frame times while a game runs. When frames stay slow and the GPU is saturated, it lowers the internal render scale a little (down to 85% of what the game started with), then climbs back when the load passes.\n\nOnly helps GPU-bound slowdowns; it logs every decision as [Meliora] adaptive: in the log.\n\nTakes effect the next time a game starts.\n\nLeave ON if unsure.")
+                Divider()
+                SettingsToggle(isOn: $melioraTarget30, icon: "30.circle", label: "Target 30 FPS", infoMessage: "Paces the compositor at 30 FPS instead of 60. Games that already target 30 (most Switch titles) get steadier pacing and the device runs cooler.\n\nGames that target 60 will feel choppier with this on.\n\nTakes effect the next time a game starts.")
+                Divider()
+                SettingsToggle(isOn: $melioraSmooth, icon: "waveform", label: "Smooth Pacing", infoMessage: "Reserved for live pacing changes while a game runs.\n\nNot wired yet in this version: the switch currently does nothing — pacing (including Target 30 FPS) is applied when a game starts. Planned to be completed in a future update.")
+                Divider()
                 SettingsToggle(isOn: $melioraThreadQoS, icon: "cpu", label: "Thread QoS Scheduling", infoMessage: "Tags emulator threads with iOS quality-of-service classes, so the scheduler keeps the render loop and the game's main thread on the fast CPU cores instead of background jobs (counter queries, disk cache writes, JIT).\n\nMakes the biggest difference on base iPhones with 2 performance cores.\n\nTakes effect the next time a game starts.\n\nLeave ON if unsure.")
                 Divider()
                 SettingsToggle(isOn: $melioraMvkPrefillCmdBuffers, icon: "square.stack.3d.up.fill", label: "MVK: Prefill Metal Command Buffers", infoMessage: "Lets MoltenVK prefill Metal command buffers, which can lower command encoding overhead on the GPU thread.\n\nExperimental: may increase memory use.\n\nTakes effect the next time a game starts.")

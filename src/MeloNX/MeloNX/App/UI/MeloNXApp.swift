@@ -106,6 +106,16 @@ struct MeloNXApp: View {
         let threadQoS = UserDefaults.standard.object(forKey: "melioraThreadQoS") as? Bool ?? true
         setenv("MELIORA_QOS", threadQoS ? "1" : "0", 1)
 
+        // Meliora Adaptive Engine toggles (read by the emulator core at game start).
+        let melioraAdaptive = UserDefaults.standard.object(forKey: "melioraAdaptive") as? Bool ?? true
+        setenv("MELIORA_ADAPTIVE", melioraAdaptive ? "1" : "0", 1)
+
+        let target30 = UserDefaults.standard.bool(forKey: "melioraTarget30")
+        setenv("MELIORA_TARGET_FPS", target30 ? "30" : "60", 1)
+
+        let melioraSmooth = UserDefaults.standard.bool(forKey: "melioraSmooth")
+        setenv("MELIORA_SMOOTH", melioraSmooth ? "1" : "0", 1)
+
         // In MoltenVK "0" means NO_PREFILL, "1" enables prefilling.
         let mvkPrefill = UserDefaults.standard.bool(forKey: "melioraMvkPrefillCmdBuffers")
         setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", mvkPrefill ? "1" : "0", 1)

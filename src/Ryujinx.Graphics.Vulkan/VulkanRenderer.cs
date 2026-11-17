@@ -720,7 +720,16 @@ namespace Ryujinx.Graphics.Vulkan
 
             SystemMemoryType memoryType;
 
-            if (IsSharedMemory && !IsMoltenVk)
+            // Meliora: on Apple GPUs host memory physically is the device memory, but
+            // MoltenVK advertises it in a way that fails the shared-memory probe below.
+            // The override opts into the unified-memory fast path on MoltenVK; it is off
+            // unless MELIORA_UNIFIED_MEMORY=1 is set, and the effective choice is logged
+            // by the "[Meliora] gpu:" line.
+            if (IsMoltenVk && Environment.GetEnvironmentVariable("MELIORA_UNIFIED_MEMORY") == "1")
+            {
+                memoryType = SystemMemoryType.UnifiedMemory;
+            }
+            else if (IsSharedMemory && !IsMoltenVk)
             {
                 memoryType = SystemMemoryType.UnifiedMemory;
             }
@@ -729,6 +738,14 @@ namespace Ryujinx.Graphics.Vulkan
                 memoryType = Vendor == Vendor.Nvidia ?
                     SystemMemoryType.DedicatedMemorySlowStorage :
                     SystemMemoryType.DedicatedMemory;
+            }
+
+            // Meliora: one line per session that shows the effective GPU configuration,
+            // so a game log proves which renderer, memory type and MoltenVK options were
+            // actually in effect.
+            if (IsMoltenVk && (OperatingSystem.IsIOS() || OperatingSystem.IsMacOS()))
+            {
+                Console.WriteLine($"[Meliora] gpu: {GpuRenderer} ({GpuVendor}), {GpuVersion}, memoryType={memoryType}, tbdr={IsTBDR}{MoltenVK.MVKInitialization.DescribeEffectiveOptions()}");
             }
 
             return new Capabilities(

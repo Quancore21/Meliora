@@ -16,8 +16,6 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
 {
     class SurfaceFlinger : IConsumerListener, IDisposable
     {
-        private const int TargetFps = 60;
-
         private readonly Switch _device;
 
         private readonly Dictionary<long, Layer> _layers;
@@ -30,7 +28,18 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
         private readonly AutoResetEvent _nextFrameEvent = new(true);
         private long _ticks;
         private long _ticksPerFrame;
-        private readonly long _spinTicks;
+
+        // Meliora: the spin tail is adaptive. It starts at the old fixed 2ms budget and
+        // then follows the composer's measured wake lateness, clamped between 0.2ms and
+        // 2ms, or is pinned by MELIORA_SPIN_US when that is set.
+        private long _spinTicks;
+        private readonly long _spinFloorTicks;
+        private readonly long _spinCapTicks;
+        private long _latenessEma;
+        private bool _spinAdaptive;
+        private readonly bool _smoothRuntime;
+        private int _appliedTargetHz;
+
         private readonly long _1msTicks;
 
         private int _swapInterval;
@@ -77,8 +86,30 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
             }
 
             _ticks = 0;
-            _spinTicks = Stopwatch.Frequency / 500;
             _1msTicks = Stopwatch.Frequency / 1000;
+            _spinFloorTicks = Stopwatch.Frequency / 5000; // 0.2ms
+            _spinCapTicks = Stopwatch.Frequency / 500;    // 2ms
+            // Meliora: re-read the pacing target for this game. The app re-applies the
+            // environment for every launch, and the static field would otherwise keep
+            // the value of the very first game in the process. The smooth flag is
+            // sampled once here too, instead of a per-frame environment lookup.
+            MelioraFramePacing.RefreshTargetHz();
+            _smoothRuntime = Environment.GetEnvironmentVariable("MELIORA_SMOOTH") == "1";
+
+            _appliedTargetHz = MelioraFramePacing.TargetHz;
+
+            // Meliora: a fixed spin budget can be forced with MELIORA_SPIN_US (in
+            // microseconds); otherwise it adapts to the measured wake lateness.
+            if (long.TryParse(Environment.GetEnvironmentVariable("MELIORA_SPIN_US"), out long spinUs) && spinUs > 0)
+            {
+                _spinTicks = Math.Clamp(spinUs * Stopwatch.Frequency / 1_000_000, 1, Stopwatch.Frequency / 100);
+                _spinAdaptive = false;
+            }
+            else
+            {
+                _spinTicks = _spinCapTicks;
+                _spinAdaptive = true;
+            }
 
             UpdateSwapInterval(1);
 
@@ -97,7 +128,7 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
             }
             else
             {
-                _ticksPerFrame = Stopwatch.Frequency / TargetFps;
+                _ticksPerFrame = Stopwatch.Frequency / MelioraFramePacing.TargetHz;
             }
         }
 
@@ -318,15 +349,31 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
                 {
                     Compose();
 
+                    // Meliora: the wait bounds how long the unbuffered path idles when
+                    // no new buffer arrives; follow the pacing target instead of a
+                    // hard-coded 60 Hz assumption.
                     _device.System?.SignalVsync();
 
-                    _nextFrameEvent.WaitOne(17);
+                    _nextFrameEvent.WaitOne((int)Math.Ceiling(1000.0 / MelioraFramePacing.TargetHz));
                     lastTicks = ticks;
                 }
                 else
                 {
                     _ticks += ticks - lastTicks;
                     lastTicks = ticks;
+
+                    // Meliora: with the "Smooth" toggle on, pick up a changed pacing
+                    // target without a game restart.
+                    if (_smoothRuntime)
+                    {
+                        int targetHz = MelioraFramePacing.TargetHz;
+
+                        if (targetHz != _appliedTargetHz)
+                        {
+                            _appliedTargetHz = targetHz;
+                            _ticksPerFrame = Stopwatch.Frequency / Math.Max(targetHz, 1);
+                        }
+                    }
 
                     if (_ticks >= _ticksPerFrame)
                     {
@@ -348,11 +395,22 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
                     long diff = _ticksPerFrame - (_ticks + PerformanceCounter.ElapsedTicks - ticks);
                     if (diff > 0)
                     {
-                        PreciseSleepHelper.SleepUntilTimePoint(_event, PerformanceCounter.ElapsedTicks + diff);
+                        long target = PerformanceCounter.ElapsedTicks + diff;
+
+                        PreciseSleepHelper.SleepUntilTimePoint(_event, target);
+
+                        if (_spinAdaptive)
+                        {
+                            UpdateSpinTicks(target);
+                        }
 
                         diff = _ticksPerFrame - (_ticks + PerformanceCounter.ElapsedTicks - ticks);
 
-                        if (diff < _spinTicks)
+                        if (diff <= 0)
+                        {
+                            // The sleep already overran the time point; nothing to wait for.
+                        }
+                        else if (diff < _spinTicks)
                         {
                             PreciseSleepHelper.SpinWaitUntilTimePoint(PerformanceCounter.ElapsedTicks + diff);
                         }
@@ -363,6 +421,37 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Meliora: tunes the spin threshold from the measured wake lateness of the
+        /// previous sleep.
+        ///
+        /// The nanosleep path is biased to wake slightly before the time point, so what
+        /// is left of the frame is covered by a precise spin. When the wake-earliness
+        /// varies between devices (or disappears entirely, waking late instead), a fixed
+        /// threshold either burns CPU spinning uselessly or leaves a coarse wait in
+        /// charge of the last milliseconds. The exponential moving average of the
+        /// observed lateness keeps the spin just big enough to cover it, within a
+        /// 0.2ms floor and the old 2ms cap.
+        /// </summary>
+        /// <param name="targetTicks">Time point the sleep was aiming for</param>
+        private void UpdateSpinTicks(long targetTicks)
+        {
+            long wake = PerformanceCounter.ElapsedTicks;
+
+            if (wake <= targetTicks)
+            {
+                // Woke on time or early: nothing was lost to lateness.
+                return;
+            }
+
+            long lateness = wake - targetTicks;
+
+            // 25% weight per frame, so a single scheduling outlier cannot pin the spin.
+            _latenessEma = _latenessEma == 0 ? lateness : _latenessEma + ((lateness - _latenessEma) >> 2);
+
+            _spinTicks = Math.Clamp(_latenessEma + _1msTicks / 5, _spinFloorTicks, _spinCapTicks);
         }
 
         public void Compose()

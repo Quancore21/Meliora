@@ -30,6 +30,8 @@ namespace Ryujinx.Common.SystemInterop
         BackgroundTranslate,
         /// <summary>Parallel disk shader cache loader threads.</summary>
         DiskCacheLoader,
+        /// <summary>Background shader module/pipeline compilation tasks.</summary>
+        ShaderCompile,
     }
 
     /// <summary>
@@ -47,6 +49,7 @@ namespace Ryujinx.Common.SystemInterop
     {
         private const uint QosClassUserInteractive = 0x21;
         private const uint QosClassUserInitiated = 0x19;
+        private const uint QosClassDefault = 0x15;
         private const uint QosClassUtility = 0x11;
         private const uint QosClassBackground = 0x09;
 
@@ -129,6 +132,34 @@ namespace Ryujinx.Common.SystemInterop
         }
 
         /// <summary>
+        /// Runs a callback with the QoS class of the given role, then restores the
+        /// default class. For short-lived thread pool tasks such as shader compilation:
+        /// the pool reuses the thread afterwards for unrelated work, so the class must
+        /// not leak onto it.
+        /// </summary>
+        public static void RunWithRole(QoSRole role, Action action)
+        {
+            if (!_isDarwin || !Enabled)
+            {
+                action();
+                return;
+            }
+
+            SetCurrentThreadQoS(role);
+
+            try
+            {
+                action();
+            }
+            finally
+            {
+                // QOS_CLASS_DEFAULT is the class .NET thread pool threads effectively
+                // start with, so restoring it is a no-op for unrelated later work.
+                pthread_set_qos_class_self_np(QosClassDefault, 0);
+            }
+        }
+
+        /// <summary>
         /// Resets per-session state (interactive slot usage, game main thread claim and the
         /// applied-role log). Call when a new game starts, before guest threads spawn.
         /// </summary>
@@ -168,6 +199,9 @@ namespace Ryujinx.Common.SystemInterop
                 QoSRole.Composer => QosClassUserInitiated,
                 QoSRole.Audio => QosClassUserInitiated,
                 QoSRole.DiskCacheLoader => QosClassUserInitiated,
+                // Compiling shaders while a game runs is latency-sensitive: the GPU thread
+                // stalls until the pipeline is ready, so keep it off the E-cores.
+                QoSRole.ShaderCompile => QosClassUserInitiated,
                 _ => QosClassUtility, // CounterQueue, AsyncWork, BackgroundTranslate
             };
         }
