@@ -36,7 +36,7 @@ Using an IDE that supports the `.editorconfig` standard will make this much simp
 21. So-called [Magic Numbers](https://en.wikipedia.org/wiki/Magic_number_(programming)) should be defined as named constants before use (for example `for (int i = 56; i < 68; i++)` could read `for (int i = _currentAge; i < _retireAge; i++)`). 
     This may be ignored for trivial or syntactically common statements.
 
-An [EditorConfig](https://editorconfig.org "EditorConfig homepage") file (`.editorconfig`) has been provided at the root of the runtime repository, enabling C# auto-formatting conforming to the above guidelines.
+An [EditorConfig](https://editorconfig.org "EditorConfig homepage") file (`.editorconfig`) has been provided at the root of this repository, enabling C# auto-formatting conforming to the above guidelines.
 
 ### Example File:
 

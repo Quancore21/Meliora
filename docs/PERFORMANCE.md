@@ -1,0 +1,307 @@
+# Performance model
+
+This document explains the Meliora Adaptive Engine, the memory governor and the evidence behind their current values. It is written for people who want to understand a log, tune an experiment or challenge a release claim. Every number here comes from a game log or from a constant in the code; when the code and this document disagree, the code is right and the document is a bug.
+
+The current values are the 0.0.5 values. They were calibrated from the first long 0.0.4 field log and are still being validated on-device. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) and [CHANGELOG](../CHANGELOG.md) say what is known and what is still open.
+
+## Design principles
+
+1. **Picture first.** Lowering the render scale is a last resort, not a default. 0.0.5 stops at x0.90 of the starting scale; 0.0.4 stopped at x0.85 and the field log showed that the extra softness bought little in the heaviest scenes.
+2. **The median is the signal.** A single slow frame is usually a shader compile, a pipeline creation or an allocation. Resolution cannot fix those, and reacting to them makes the picture worse for the rest of the session. A sustained median slowdown is different: it means the steady-state load is above what the device can deliver.
+3. **The GPU must be the bottleneck.** The controller steps down only when the GPU thread is also saturated. CPU-bound slowness and the game's own pacing are detected and deliberately left alone.
+4. **The controller must be able to climb back.** The 0.0.4 controller needed ten consecutive green windows and reset the streak on every hitch, so in practice it never returned from its floor. 0.0.5 counts clean windows and ignores CPU-bound slow windows and spikes for the climb.
+5. **Logs, not adjectives.** Every decision is logged with the median, the budget, the GPU busy fraction and the old/new scale. A claim that cannot be checked in a log is not a performance claim.
+
+## Adaptive render scale
+
+Source: `src/Ryujinx.Headless.SDL2/AdaptivePerformance.cs`. Hook: `WindowBase.RunLoop` calls `AdaptivePerformance.OnIterationEnd(fifoBusyTicks, presented)` once per render-loop iteration and `AdaptivePerformance.ResetSession()` once per game.
+
+### Constants
+
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `WindowSize` | 96 | Present-to-present samples per evaluation window (~1.6 s at 60 FPS). |
+| `WarmupPresents` | 90 | Frames skipped after the first present. |
+| `WarmupMs` | 5000 | Minimum wall-clock warmup. |
+| `MedianTolerance` | 1.05 | The sustained median may sit 5% above the target before acting. |
+| `FailWindowsToStepDown` | 3 | Three consecutive slow, GPU-bound windows (~5 s). |
+| `PassWindowsToStepUp` | 5 | Five clean windows (~8 s) before climbing. |
+| `DownCooldownMs` | 5000 | At most one step down per 5 s. |
+| `UpCooldownMs` | 8000 | At most one step up per 8 s. |
+| `DownStep` | 0.95 | Multiplier per step down. |
+| `UpStep` | 1.06 | Multiplier per step up. |
+| `FloorFraction` | 0.90 | Floor relative to the starting scale. |
+| `AbsoluteFloor` | 0.5 | The scale can never go below 0.5×. |
+| `GpuBusyForDownStep` | 0.75 | Busy fraction that counts as GPU-bound. |
+| `GpuBusyForUpStep` | 0.50 | The GPU thread must be below this to climb. |
+| `GpuIdleForCpuBoundLog` | 0.35 | Below this, a slow window is logged as CPU-bound. |
+| `MaxSampleMs` | 100 | Samples above this are clamped; pauses and loads are not frame times. |
+| `LogEveryWindows` | 6 | Periodic status line every six windows (~10 s). |
+
+### Window and budget
+
+- The controller records present-to-present intervals. If several frames are presented back-to-back in one iteration (catch-up after a hitch), only the first gap counts as a real frame time.
+- A window is evaluated when it holds 96 samples. The first 90 presents and the first five seconds are warmup and make no decisions.
+- At 60 FPS the budget is `1000 / 60 × 1.05 = 17.5 ms`. At 30 FPS it is `35 ms`.
+- `p95` is still computed for the periodic status line; it is not used for decisions.
+
+### Busy fraction
+
+`fifoBusyTicks` measures how long the iteration spent inside `Device.ProcessFrame()`. The busy fraction is the sum of those ticks divided by the wall-clock time of the evaluated iterations, clamped so a single iteration cannot report more busy time than wall time.
+
+This is a **GPU-thread saturation proxy**, not Metal GPU utilization and not a hardware counter. It is deliberately conservative: a window can be slow with a moderately busy GPU thread and still not trigger a step down, because the evidence is not strong enough. That is the intended picture-first behaviour.
+
+### State machine
+
+For each evaluated window:
+
+```
+budget = 1000 / targetHz * 1.05
+slow = median > budget
+gpuBound = busyFraction >= 0.75
+
+if slow and gpuBound:
+    failStreak += 1
+    passStreak = 0
+else:
+    failStreak = 0
+    if slow:
+        log "slow frames but GPU idle" at most every 10 s
+    else if busyFraction < 0.50:
+        passStreak += 1
+
+if slow and gpuBound and failStreak >= 3 and cooldown >= 5 s:
+    if scale > floor:
+        scale = max(floor, scale * 0.95)
+        apply
+        reset streaks
+    else:
+        log "at floor" periodically
+
+else if not slow and busyFraction < 0.50 and
+        passStreak >= 5 and cooldown >= 8 s and scale < start:
+    scale = min(start, scale * 1.06)
+    snap to start when within 0.01
+    apply
+    reset passStreak
+```
+
+Two details matter:
+
+- A slow **CPU-bound** window resets `failStreak` instead of pre-charging it. Without that, two CPU-bound windows followed by one GPU-bound spike would step down immediately, contradicting "three consecutive GPU-bound windows".
+- A slow CPU-bound window does **not** reset `passStreak`. The climb is about clean windows, and a CPU-bound slow window says nothing about whether the GPU could handle a higher scale. A GPU-bound slow window does reset it.
+
+### Floor
+
+The floor is:
+
+```
+floor = max(0.5, startScale * 0.90)                  // default
+floor = clamp(MELIORA_FLOOR, 0.5, startScale)        // when MELIORA_FLOOR is set
+```
+
+`MELIORA_FLOOR` is an absolute scale, not a fraction. `MELIORA_FLOOR=0.75` means 0.75× regardless of the starting scale. Values outside 0.5–1.0 are ignored and the default fraction is used.
+
+The starting scale is always the ceiling: if the user launched the game at 0.75×, the controller can never climb above 0.75×. It also never lowers a game below 0.5×.
+
+### What the controller does not do
+
+- It does not change any setting other than `GraphicsConfig.ResScale`.
+- It does not touch per-game profiles, clocks, thermal policy or MoltenVK options.
+- It does not react to single-frame spikes, shader compiles or CPU-bound slowness.
+- It does not allocate or perform per-frame logging.
+- It does not guarantee 60 FPS. A GPU-bound game at its floor can still miss the target; the `at floor` line is the honest evidence of that.
+
+## Calibration history
+
+### 0.0.3 baseline
+
+Super Mario Odyssey 1.3.0 on an iPhone 17, iOS 27, warm phone (`thermal=serious`), three ~2-minute sessions:
+
+| Metric | Value |
+| --- | --- |
+| Average FPS | 56.5 / 57.5 / 56.4 |
+| Minimum FPS | 45 / 32 / 32 |
+| `GPU processing thread is too slow` warnings | 2 / 6 / 3 |
+| Footprint over ~1 minute | 2.4 → 3.7 GB |
+
+This established that the device was GPU-bound under thermal throttling and that heavy scenes dipped into the low 30s.
+
+### 0.0.4: what the first long log showed
+
+The 0.0.4 controller used the 95th percentile, a x0.85 floor, ten pass windows and a 10-second up-cooldown. A 17-minute session produced:
+
+- The first false step down fired while the game held a median of 16.7–17.2 ms (a locked 60 FPS); a compile-spike p95 tripped the gate.
+- The controller reached its x0.85 floor about six minutes in and stayed there for the remaining eleven minutes. There were no up-steps: a single hitch reset the ten-window streak.
+- Heavy scenes had a median of 19.7–27.6 ms with `gpuBusy` 74–95%, so the GPU really was the bottleneck there — but x0.85 still looked visibly soft.
+- 56 `GPU processing thread is too slow` warnings (~3.3/min), close to the 0.0.3 rate.
+- Footprint grew from 2.9 GB to 5.4 GB. Free memory fell from 988 MB to 265 MB, seven emergency trims were no-ops, and iOS killed the process at about 6 GB.
+- The mem line's instantaneous `available=` showed 1142 MB seconds before the trim check measured 335 MB, which is why 0.0.5 logs the window minimum.
+
+### 0.0.5: what changed and what is still open
+
+Changed:
+
+- Median gate with a 5% tolerance; no decision on p95.
+- Three consecutive GPU-bound slow windows for a step down; `gpuBusy ≥ 75%`.
+- x0.90 floor; x0.95 step.
+- Five clean windows for a step up; `gpuBusy < 50%`; 8-second cooldown; CPU-bound windows and spikes do not reset the climb.
+- `MELIORA_FLOOR` absolute override.
+- Texture-cache emergency floor 192 → 96 MiB.
+- Proactive trim at 3/4 of the headroom instead of 1/2.
+- `minAvail=` and `texCache=` telemetry.
+
+Open:
+
+- The thresholds have not yet been confirmed by a second long device session. The first 0.0.5 log decides whether the floor or the busy threshold needs another pass.
+- The texture-cache floor fix frees at most a couple of hundred megabytes; it is not a cure for the 5.4 GB footprint. The new telemetry shows whether the cache is even the right place to look.
+- Unified Memory remains an experiment and is not part of the release build.
+
+## Memory governor
+
+### Swift policy (`MelioraGovernor.swift`)
+
+- Tick: 0.5 s on a utility queue.
+- Headroom: `clamp(10% of physical memory, 512 MiB, 1 GiB)`. On an 8 GB iPhone this is 768 MiB.
+- While the governor is enabled, every positive tick reports `os_proc_available_memory()` to the core.
+- Proactive trim: when available `< headroom × 3/4` (~575 MB on 8 GB) and the last trim was more than 10 s ago. The 0.0.4 threshold was `headroom / 2` (~383 MB), which the field log reached only after the process was already in its death spiral.
+- iOS memory warning: immediate trim.
+- Logging window: 10 s. `minAvail` is the minimum over the window; `texCache` is read from the core.
+- Pipeline cache: save request every 10 minutes and on entering the background.
+
+`os_proc_available_memory()` is spiky. A single reading can be much higher than the value the trim check sees one tick later, which is why the log reports the window minimum instead of an instantaneous sample.
+
+### Core policy (`MemoryGovernor.cs`)
+
+`Configure` clamps the headroom to 256 MiB–2 GiB and resets the sample state. `GetTextureCacheLimit` is called by the texture cache with the constrained budget, the unconstrained budget, the current size and the cache floor. When the governor has no sample yet, it returns the constrained budget. Otherwise it computes:
+
+```
+deficit = headroom - available + (currentSize - sizeAtSample)
+limit = clamp(currentSize - deficit, floor, unconstrainedMax)
+```
+
+`sizeAtSample` is captured on the first cache check after a memory report, so textures added or evicted since the sample are accounted for. A negative deficit means there is enough headroom and the cache may use its unconstrained budget.
+
+`RequestEmergencyTrim` sets a flag and schedules a non-blocking optimized GC. On the next cache check, the limit becomes `min(unconstrainedMax, max(currentSize / 2, floor))`. The GC is deliberately not a blocking compacting collection: freezing emulation for hundreds of milliseconds would be worse than the memory it frees.
+
+### Texture-cache limits
+
+`AutoDeleteCache` computes its budgets from the GPU's reported memory and the process budget:
+
+- `MaxTextureSizeCapacity`: 4 GiB.
+- `DefaultTextureSizeCapacity`: 1 GiB when the GPU reports no memory.
+- `MinTextureSizeCapacity`: 512 MiB.
+- Unconstrained budget: 50% of the GPU's reported maximum, clamped to 512 MiB–4 GiB.
+- Process budget on devices with 8 GiB or less of .NET-visible memory: 30% of that memory, clamped to 512 MiB–2 GiB.
+- `MinGovernedTextureSizeCapacity`: 96 MiB (was 192 MiB in 0.0.4).
+
+The 192 MiB floor made emergency trims a no-op in the field log: the cache sat at 47–206 MiB, and `GetTextureCacheLimit` could not return a value below 192 MiB. The log showed `texture cache 130 MiB -> 130 MiB` while the process was being killed. SMO runs with the cache as low as ~47 MiB, so 96 MiB keeps a safety margin without blocking the trim.
+
+### What the governor cannot do
+
+The texture cache is not the whole footprint. The 0.0.4 log's cache was only 47–206 MiB while the process reached 5.4 GB. Buffers, the managed heap, MoltenVK/Metal allocations and driver overhead are outside the governor's direct control. The governor is a safety valve for the caches it owns, not a general-purpose memory manager.
+
+## Frame pacing
+
+`MelioraFramePacing` is the single source of truth for the composition target:
+
+- `MELIORA_TARGET_FPS`, default 60, clamped 15–240.
+- Re-read at every game launch by `SurfaceFlinger`.
+- Used by the composer, the render-loop status update and the adaptive budget.
+
+The composer's spin tail follows the measured wake lateness between 0.2 ms and 2 ms. `MELIORA_SPIN_US` pins it for an experiment. The *Smooth Pacing* switch is reserved: the core can follow a changed target, but the app only applies settings at launch, so it has no effect in 0.0.5.
+
+## Reading the log
+
+### Adaptive lines
+
+```text
+[Meliora] adaptive: start 1.00x, floor 0.90x, target 60 fps
+[Meliora] adaptive: p95=22.1ms median=16.8ms budget=17.5ms gpuBusy=41% scale=1.00x
+[Meliora] adaptive: step down median=19.9ms budget=17.5ms gpuBusy=83% scale=1.00x -> 0.95x
+[Meliora] adaptive: step up median=16.6ms budget=17.5ms gpuBusy=38% scale=0.95x -> 1.00x
+[Meliora] adaptive: slow frames but GPU idle (gpuBusy=22%), not touching scale (CPU-bound?)
+[Meliora] adaptive: at floor (0.90x) median=21.4ms budget=17.5ms gpuBusy=79%
+```
+
+How to read them:
+
+- `median` is the sustained rate. It is the decision signal.
+- `p95` is spike severity. A high p95 with a normal median is a hitch, not overload.
+- `gpuBusy` is the GPU-thread busy proxy. A step down with `gpuBusy < 75%` should not happen; if it does, attach the log.
+- `step up` should appear after a heavy scene ends. Its absence over many minutes at a reduced scale is a calibration problem.
+- `at floor` is not a failure by itself. It is the honest statement that the game is still GPU-bound at the lowest allowed scale.
+
+### Memory lines
+
+```text
+[Meliora] mem footprint=2914MB minAvail=612MB texCache=168MiB thermal=serious lowPower=false fps=59 avgFps=56.8 minFps=41.0
+```
+
+- `footprint` is `phys_footprint` from `task_vm_info`.
+- `minAvail` is the worst `os_proc_available_memory()` in the 10-second window.
+- `texCache` is the texture cache's total size in MiB. If it sits at 96 MiB while `minAvail` is low, the pressure is outside the texture cache.
+- `fps` is the instantaneous value at the log tick; `avgFps` and `minFps` cover the window.
+- `thermal` is the iOS thermal state; compare runs at a similar state.
+
+### GPU line
+
+```text
+[Meliora] gpu: Apple MTL GPU ..., memoryType=DedicatedMemory, tbdr=True, mvk: argBuffers=1 prefill=0
+```
+
+The `memoryType=` field is the effective choice. `UnifiedMemory` in a release build would mean the override is active; release builds ship with it off.
+
+## Experiments
+
+### A/B protocol
+
+1. Use the same game, scene, route, graphics settings and IPA variant.
+2. Compare runs at a similar thermal state. Record `thermal=` from the first mem line.
+3. Let the first minutes pass; shader compilation is not steady state.
+4. For a controller comparison, use a 10–15 minute run through heavy scenes, not a two-minute menu run.
+5. Keep the log from both runs and compare medians, steps, time at each scale, GPU warnings and `minAvail` / `texCache`.
+6. Do not change two things at once. If you change the floor and the busy threshold, the log cannot tell you which one mattered.
+
+The full routine and acceptance criteria are in [TESTING.md](TESTING.md).
+
+### Unified Memory (`MELIORA_UNIFIED_MEMORY=1`)
+
+This is a separate experiment, not a release feature. It switches the Vulkan memory type to `UnifiedMemory` on MoltenVK, which makes `BufferBackingState` treat buffers as host memory and skip the device-local swap path. The goal is to measure whether host/device duplication is part of the footprint.
+
+Success criteria, agreed before the experiment:
+
+- Peak `footprint` below 5.0–5.2 GB on the same route.
+- No FPS regression in heavy-geometry scenes.
+- `memoryType=UnifiedMemory` visible in the `[Meliora] gpu:` line.
+
+If any of those fails, the experiment is rejected and the default path stays.
+
+### `MELIORA_FLOOR`
+
+For testing a different floor without changing code:
+
+```sh
+MELIORA_FLOOR=0.80
+```
+
+This is an absolute scale, clamped to 0.5–1.0 and never above the starting scale. It is intended for experiments, not for routine play. Compare the same route with and without it.
+
+### Target 30
+
+For games that natively target 30 FPS, enable *Target 30 FPS* and restart the game. The pacing target is applied at launch. The adaptive budget follows the target: 35 ms at 30 FPS.
+
+## Limitations
+
+- **One device, one game.** The 0.0.5 calibration comes from SMO on an iPhone 17. Other titles, devices and thermal states may need different values.
+- **Busy fraction is a proxy.** It measures the GPU thread around `ProcessFrame`, not Metal utilization. A game can be GPU-bound in a way this proxy underestimates.
+- **The controller cannot fix hitches.** Shader compiles, pipeline creation and allocation stalls are not resolution problems.
+- **The controller cannot fix CPU-bound scenes.** Lowering resolution does not help the guest CPU or the game's own pacing.
+- **The governor cannot fix all memory pressure.** It controls textures and asks for a GC; buffers and driver allocations are outside its reach.
+- **No automated performance tests.** Testing is manual on a real device; CI validates builds, not FPS.
+- **iOS thermal behaviour is not deterministic.** Two runs on the same route can differ by several FPS. Compare trends and medians, not single frames.
+- **Picture-quality trade-off is real.** x0.90 is less soft than x0.85 but still softer than native. Users who prefer a fixed image should disable adaptive resolution.
+
+## Reporting a problem
+
+Attach the `[Meliora] adaptive` and `[Meliora] mem` lines from the run, the device, iOS version, game and title ID, IPA version and settings. If the problem is a step down that should not have happened, include the periodic lines before and after it; the median and `gpuBusy` values are the evidence. The report template is in [TESTING.md](TESTING.md#attaching-logs-to-an-issue).

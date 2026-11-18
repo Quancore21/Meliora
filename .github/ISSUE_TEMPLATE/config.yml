@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Documentation and troubleshooting
+    url: https://github.com/Quancore21/Meliora/tree/main/docs
+    about: Installation, JIT, entitlements, performance, testing and release documentation.
+  - name: Report a security vulnerability
+    url: https://github.com/Quancore21/Meliora/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue for a security problem.

@@ -1,147 +1,163 @@
-# Contribution to Ryujinx
+# Contributing to Meliora
 
-You can contribute to Ryujinx with PRs, testing of PRs and issues. Contributing code and other implementations is greatly appreciated alongside simply filing issues for problems you encounter.
-Please read the entire document before continuing as it can potentially save everyone involved a significant amount of time.
+Meliora is an unofficial Nintendo Switch emulator for iPhone and iPad, built on Ryujinx, MeloNX and MeloVertex. Contributions are welcome: bug reports, device logs, documentation fixes, code and testing. This document explains what a useful contribution looks like and how changes are reviewed.
 
-# Quick Links
+Please read it before opening a large pull request. It is short, and it saves time for everyone.
 
-* [Code Style Documentation](docs/coding-guidelines/coding-style.md)
-* [Pull Request Guidelines](docs/workflow/pr-guide.md)
+## Quick links
 
-## Reporting Issues
+- [Code style](docs/coding-guidelines/coding-style.md) — C# style used by the core.
+- [Pull request guide](docs/workflow/pr-guide.md) — review rules and merge process.
+- [Building](Compile.md) — GitHub Actions, macOS and Windows core validation.
+- [Testing](docs/TESTING.md) — device test matrix and log templates.
+- [Architecture](docs/ARCHITECTURE.md) — how the app and core fit together.
+- [Performance model](docs/PERFORMANCE.md) — controller constants and calibration.
+- [Releasing](docs/RELEASING.md) — versioning and release verification.
 
-We always welcome bug reports, feature proposals and overall feedback. Here are a few tips on how you can make reporting your issue as effective as possible.
+## Reporting issues
 
-### Identify Where to Report
+### Search first
 
-The Ryujinx codebase is distributed across multiple repositories in the [Ryujinx organization](https://github.com/Ryujinx). Depending on the feedback you might want to file the issue on a different repo. Here are a few common repos:
+Check the [open issues](https://github.com/Quancore21/Meliora/issues) before filing a new one. If an issue already exists, add your log and device details there instead of opening a duplicate.
 
-* [Ryujinx/Ryujinx](https://github.com/Ryujinx/Ryujinx) Ryujinx core project files.
-* [Ryujinx/Ryujinx-Games-List](https://github.com/Ryujinx/Ryujinx-Games-List) Ryujinx game compatibility list.
-* [Ryujinx/Ryujinx-Website](https://github.com/Ryujinx/Ryujinx-Website) Ryujinx website source code.
-* [Ryujinx/Ryujinx-Ldn-Website](https://github.com/Ryujinx/Ryujinx-Ldn-Website) Ryujinx LDN website source code.
+### Use the bug report template
 
-### Finding Existing Issues
+A useful report contains:
 
-Before filing a new issue, please search our [open issues](https://github.com/Ryujinx/Ryujinx/issues) to check if it already exists.
+- **What happened** and **what you expected**, in one or two sentences.
+- **Reproduction steps**, as short as possible. For a game problem, the scene, route and save file if you can share one.
+- **Device and OS:** exact model (for example iPhone 17, `iPhone18,3`), iOS version, RAM if known.
+- **Meliora version:** the IPA file name or the version shown in the app.
+- **Game and title ID**, plus update/DLC versions.
+- **Settings:** docked mode, aspect ratio, resolution scale, VSync, MacroHLE, shader cache, texture recompression, and any *Advanced Options* toggles you changed.
+- **The log** from the run, especially the `[Meliora] mem`, `[Meliora] adaptive` and `[Meliora] gpu` lines around the event. Include the whole log when possible; a single line rarely explains a decision.
+- **Whether the run is test A, B, C, D or E** from [TESTING.md](docs/TESTING.md), and whether the device was warm or cold (`thermal=`).
 
-If you do find an existing issue, please include your own feedback in the discussion. Do consider upvoting (👍 reaction) the original post, as this helps us prioritize popular issues in our backlog.
+Do not paste keys, firmware, personal paths or copyrighted game files. The in-app log should not contain keys, but check before attaching it.
 
-### Writing a Good Feature Request
+### Performance reports
 
-Please review any feature requests already opened to both check it has not already been suggested, and to familiarize yourself with the format. When ready to submit a proposal, please use the [Feature Request issue template](https://github.com/Ryujinx/Ryujinx/issues/new?assignees=&labels=&projects=&template=feature_request.yml&title=%5BFeature+Request%5D).
+Performance reports need evidence, not adjectives. "It stutters" cannot be compared with a baseline. Say what the FPS was, what the median and `gpuBusy` were, how long the session ran and what the thermal state was. If you claim a regression, attach a log from the previous release on the same route.
 
-### Writing a Good Bug Report
+Reports that cannot be reproduced with a log, device, version and settings will be closed as incomplete. That is not a judgement of the report; it is the only way to compare releases honestly.
 
-Good bug reports make it easier for maintainers to verify and root cause the underlying problem. The better a bug report, the faster the problem will be resolved. 
-Ideally, a bug report should contain the following information:
+### Security reports
 
-* A high-level description of the problem.
-* A _minimal reproduction_, i.e. the smallest time commitment/configuration required to reproduce the wrong behavior. This can be in the form of a small homebrew application, or by providing a save file and reproduction steps for a specific game.
-* A description of the _expected behavior_, contrasted with the _actual behavior_ observed.
-* Information on the environment: OS/distro, CPU, GPU (including driver), RAM etc.
-* A Ryujinx log file of the run instance where the issue occurred. Log files can be found in `[Executable Folder]/Logs` and are named chronologically.
-* Additional information, e.g. is it a regression from previous versions? Are there any known workarounds?
+Do **not** open a public issue for a vulnerability. Use [SECURITY.md](SECURITY.md).
 
-When ready to submit a bug report, please use the [Bug Report issue template](https://github.com/Ryujinx/Ryujinx/issues/new?assignees=&labels=bug&projects=&template=bug_report.yml&title=%5BBug%5D).
+### What not to report
 
-## Contributing Changes
+- Requests for games, keys or firmware. They are closed without discussion.
+- Problems caused by modified builds, injected libraries, other emulators or a broken sideloader.
+- Game compatibility comparisons with desktop Ryujinx or other iOS emulators; the rendering path and memory limits are different.
+- "Game X does not work" without a log, device, version and settings.
 
-Project maintainers will merge changes that both improve the project and meet our standards for code quality.
+## Feature requests
 
-The [Pull Request Guide](docs/workflow/pr-guide.md) and [License](https://github.com/Ryujinx/Ryujinx/blob/master/LICENSE.txt) docs define additional guidance.
+Open an issue describing the problem, not only the proposed solution. Explain who benefits and how it fits Meliora's scope: iOS-specific performance, stability, diagnostics and the app experience.
 
-### DOs and DON'Ts
+Meliora does not maintain a game compatibility list, per-game profiles or a separate emulator core. Compatibility work belongs upstream. A request that duplicates upstream work, or that requires maintaining a game database, is likely to be declined.
 
-Please do:
+## Contributing code
 
-* **DO** follow our [coding style](docs/coding-guidelines/coding-style.md) (C# code-specific).
-* **DO** give priority to the current style of the project or file you're changing even if it diverges from the general guidelines.
-* **DO** keep the discussions focused. When a new or related topic comes up
-  it's often better to create new issue than to side track the discussion.
-* **DO** clearly state on an issue that you are going to take on implementing it.
-* **DO** blog and tweet (or whatever) about your contributions, frequently!
+### Before you start
 
-Please do not:
+- For anything non-trivial, open an issue first so the direction can be agreed before you invest time.
+- Keep changes focused. A bug fix should not include a formatting sweep, a dependency bump and a new feature.
+- Do not commit code you did not write unless its licence is compatible and it is attributed correctly. See [Copying code](#copying-code).
 
-* **DON'T** make PRs for style changes.
-* **DON'T** surprise us with big pull requests. Instead, file an issue and talk with us on Discord to start
-  a discussion so we can agree on a direction before you invest a large amount
-  of time.
-* **DON'T** commit code that you didn't write. If you find code that you think is a good fit to add to Ryujinx, file an issue or talk to us on Discord to start a discussion before proceeding.
-* **DON'T** submit PRs that alter licensing related files or headers. If you believe there's a problem with them, file an issue and we'll be happy to discuss it.
+### Workflow
 
-### Suggested Workflow
+1. Create or find an issue for the work. Trivial fixes can skip this step.
+2. Fork the repository and create a branch off `main`.
+3. Make and commit your changes.
+4. Build and test:
+   - **Core (Windows or Linux):**
+     ```powershell
+     dotnet build src/Ryujinx.Headless.SDL2/Ryujinx.Headless.SDL2.csproj -c Release --no-incremental
+     ```
+     A clean tree builds with **0 errors and 49 warnings**. Compare with that baseline instead of expecting zero warnings.
+   - **Full iOS build:** push the branch and let the `Build iOS IPA` workflow run, or follow [Compile.md](Compile.md) on a Mac.
+   - **Performance changes:** test on a real device with the routine in [TESTING.md](docs/TESTING.md). CI cannot measure FPS, thermal behaviour or memory pressure.
+5. Open a pull request against `main`. Describe the problem, the change, the tests you ran, and any behaviour you could not verify.
+6. Address review feedback with new commits; do not rewrite published history just to hide review changes.
+7. If CI fails, check the failing job before asking for a review. The `build-logs` artifact is the first place to look.
 
-We use and recommend the following workflow:
+### Performance changes
 
-1. Create or find an issue for your work.
-    - You can skip this step for trivial changes.
-    - Get agreement from the team and the community that your proposed change is a good one if it is of significant size or changes core functionality.
-    - Clearly state that you are going to take on implementing it, if that's the case. You can request that the issue be assigned to you. Note: The issue filer and the implementer don't have to be the same person.
-2. Create a personal fork of the repository on GitHub (if you don't already have one).
-3. In your fork, create a branch off of main (`git checkout -b mybranch`).
-    - Branches are useful since they isolate your changes from incoming changes from upstream. They also enable you to create multiple PRs from the same fork.
-4. Make and commit your changes to your branch.
-    - [Build Instructions](https://github.com/Ryujinx/Ryujinx#building) explains how to build and test.
-    - Commit messages should be clear statements of action and intent.
-6. Build the repository with your changes.
-    - Make sure that the builds are clean.
-    - Make sure that `dotnet format` has been run and any corrections tested and committed.
-7. Create a pull request (PR) against the Ryujinx/Ryujinx repository's **main** branch.
-    - State in the description what issue or improvement your change is addressing.
-    - Check if all the Continuous Integration checks are passing. Refer to [Actions](https://github.com/Ryujinx/Ryujinx/actions) to check for outstanding errors.
-8. Wait for feedback or approval of your changes from the [core development team](https://github.com/orgs/Ryujinx/teams/developers)
-    - Details about the pull request [review procedure](docs/workflow/ci/pr-guide.md).
-9. When the team members have signed off, and all checks are green, your PR will be merged.
-    - The next official build will automatically include your change.
-    - You can delete the branch you used for making the change.
+Meliora's releases are calibrated from logs. A performance change must include:
 
-### Good First Issues
+- A before/after log from the same game, route, settings, IPA variant and a similar thermal state.
+- One variable changed at a time. If you change the floor and the busy threshold in one PR, the log cannot tell which one mattered.
+- The rationale: what the old behaviour did, what the new behaviour should do, and what evidence supports it.
+- Updates to [docs/PERFORMANCE.md](docs/PERFORMANCE.md) and [docs/TESTING.md](docs/TESTING.md) when a constant, log format or acceptance criterion changes.
 
-The team marks the most straightforward issues as [good first issues](https://github.com/Ryujinx/Ryujinx/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22). This set of issues is the place to start if you are interested in contributing but new to the codebase.
+Do not present an unverified threshold as a measured improvement. "Expected to reduce time at the floor" is honest; "fixes the floor" without a device run is not.
 
-### Commit Messages
+### Documentation changes
 
-Please format commit messages as follows (based on [A Note About Git Commit Messages](http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html)):
+- Documents are in English and describe the code on `main`.
+- Check for stale version numbers, release names and claims when touching a document that mentions a release.
+- Performance statements must be checkable from a log. Link to the source of a constant instead of duplicating it without a reference.
+- Do not invent licence terms, support commitments or compatibility guarantees.
 
-```
-Summarize change in 50 characters or less
+### What we will not merge
 
-Provide more detail after the first line. Leave one blank line below the
-summary and wrap all lines at 72 characters or less.
+- Changes that alter licensing files, copyright headers or attribution without a compelling legal reason.
+- Keys, firmware, game files or tools for obtaining them.
+- Large unrelated rewrites, drive-by formatting, or a new dependency without justification.
+- A compatibility list or per-game tuning database.
+- Performance claims without a reproducible log.
+- Changes that silently make a documented setting do nothing; if a setting is reserved, say so in the UI and the docs.
 
-If the change fixes an issue, leave another blank line after the final
-paragraph and indicate which issue is fixed in the specific format
-below.
+## Commit messages
+
+Format:
+
+```text
+Summarize the change in 50 characters or less
+
+Explain why the change is needed and what it affects. Wrap lines at
+72 characters or less. Mention the evidence (a log, a test, a device)
+if the change depends on it.
 
 Fix #42
 ```
 
-Also do your best to factor commits appropriately, not too large with unrelated things in the same commit, and not too small with the same small change applied N times in N different commits.
+Guidelines:
 
-### PR - CI Process
+- Use the imperative mood: "Fix texture cache floor", not "Fixed" or "Fixes".
+- Keep the summary specific. "Fix crash" is not useful; "Fix trim when cache is below floor" is.
+- One logical change per commit where practical.
+- Release commits are titled with the version only, for example `0.0.5`; the body carries the changelog entry.
+- Documentation batches may use `docs` or `housekeeping` as the title.
 
-The [Ryujinx continuous integration](https://github.com/Ryujinx/Ryujinx/actions) (CI) system will automatically perform the required builds and run tests (including the ones you are expected to run) for PRs. Builds and test runs must be clean or have bugs properly filed against flaky/unexpected failures that are unrelated to your change.
+## Review process
 
-If the CI build fails for any reason, the PR actions tab should be consulted for further information on the failure. There are a few usual suspects for such a failure:
-* `dotnet format` has not been run on the PR and has outstanding stylistic issues.
-* There is an error within the PR that fails a test or errors the compiler.
-* Random failure of the workflow can occasionally result in a CI failure. In this scenario a maintainer will manually restart the job.
+- Every pull request needs a maintainer review and a green CI run before merge.
+- This is a volunteer project with a single maintainer; review times vary. A polite bump after a week is fine.
+- Use draft pull requests for work in progress. Mark the PR ready when you want a review.
+- Resolve review conversations only after the feedback is addressed or both sides agree.
+- Squash merges are the default. Keep the PR title meaningful; it becomes the merge commit.
+- If a PR becomes inactive or no longer applies, it may be closed. You can reopen it if you want to continue.
 
-### PR Feedback
+## Copying code
 
-Ryujinx team and community members will provide feedback on your change. Community feedback is highly valued. You may see the absence of team feedback if the community has already provided good review feedback.
+Meliora contains code under AGPL-3.0, the MeloNX License and MIT. If you copy code from another project:
 
-Two Ryujinx team members must review and approve every PR prior to merge. They will often reply with "LGTM, see nit". That means that the PR will be merged once the feedback is resolved. "LGTM" == "looks good to me".
+- The source licence must be compatible with the file it lands in.
+- Keep the original copyright and licence headers intact.
+- Add the attribution to [NOTICE.md](NOTICE.md) when required.
+- Say where the code came from in the PR description.
 
-There are lots of thoughts and [approaches](https://github.com/antlr/antlr4-cpp/blob/master/CONTRIBUTING.md#emoji) for how to efficiently discuss changes. It is best to be clear and explicit with your feedback. Please be patient with people who might not understand the finer details about your approach to feedback.
+Do not copy code from projects with incompatible licences, and do not remove attribution to make a file look original.
 
-#### Copying Changes from Other Projects
+## Licensing
 
-Ryujinx uses some implementations and frameworks from other projects. The following rules must be followed for PRs that include changes from another project:
+By contributing, you agree that your contribution is licensed under the same terms as the file it modifies. Meliora is distributed under AGPL-3.0; [LICENSE.txt](LICENSE.txt) also preserves the previous MeloNX License and the Ryujinx MIT notice. See [LICENSE.txt](LICENSE.txt) and [NOTICE.md](NOTICE.md) for the exact terms and third-party attributions.
 
-- The license of the file is [permissive](https://en.wikipedia.org/wiki/Permissive_free_software_licence).
-- The license of the file is left in-tact.
-- The contribution is correctly attributed in the [3rd party notices](https://github.com/Ryujinx/Ryujinx/blob/master/distribution/legal/THIRDPARTY.md) file in the repository, as needed.
+If you believe a licensing or attribution problem exists, open an issue instead of changing the files yourself.
 
+## Questions
+
+If something in this document is unclear, open an issue with the `question` label or ask in the issue you are already discussing. Do not ask the MeloNX, MeloVertex or Ryujinx teams for support with Meliora; this is an unofficial fork.

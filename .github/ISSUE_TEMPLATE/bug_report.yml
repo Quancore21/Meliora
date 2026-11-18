@@ -59,6 +59,24 @@ body:
       label: Game and title ID
       placeholder: Game name (0100XXXXXXXXXXXX)
   - type: textarea
+    id: settings
+    attributes:
+      label: Graphics settings
+      description: Docked mode, aspect ratio, resolution scale, VSync, MacroHLE, shader cache, texture recompression and any Advanced Options toggles you changed.
+      placeholder: Docked off, stretched, 1.0x, VSync on, MacroHLE off, shader cache on; Adaptive Resolution on.
+  - type: dropdown
+    id: test
+    attributes:
+      label: Which test is this?
+      description: The test matrix is described in docs/TESTING.md. Leave this as "Not a test run" if you were just playing.
+      options:
+        - Not a test run
+        - Test A — short session
+        - Test B — long session
+        - Test C — Target 30 FPS
+        - Test D — Unified Memory experiment
+        - Test E — floor experiment
+  - type: textarea
     id: what
     attributes:
       label: What happened?
