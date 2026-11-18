@@ -52,7 +52,10 @@ namespace Ryujinx.Graphics.Gpu.Image
         private const ulong MaxProcessTextureSizeCapacity = 2UL * 1024 * 1024 * 1024;
         private const ulong MaxTextureSizeCapacity = 4UL * 1024 * 1024 * 1024;
         private const ulong DefaultTextureSizeCapacity = 1UL * 1024 * 1024 * 1024;
-        private const ulong MinGovernedTextureSizeCapacity = 192UL * 1024 * 1024;
+        // Emergency trims may shrink the cache below this; the 0.0.4 floor of 192 MiB
+        // made every trim a no-op while the cache sat at 47-206 MiB (tested: SMO runs
+        // fine with the cache as low as ~47 MiB).
+        private const ulong MinGovernedTextureSizeCapacity = 96UL * 1024 * 1024;
         private const double ProcessMemoryScaleFactor = 0.30d;
         private const float MemoryScaleFactor = 0.50f;
         private ulong _maxCacheMemoryUsage = 0;

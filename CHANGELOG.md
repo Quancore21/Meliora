@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.0.5 (Adaptive Engine rebalance)
+
+Built from the first 0.0.4 field log (17-minute Super Mario Odyssey session on iPhone 17, iOS 27.2). The controller stepped down to its x0.85 floor about 6 minutes in and never climbed back, so most of the session rendered softer than 0.0.3 while the frame rate was already at target; the same log ended in an iOS memory kill at ~5.4–6 GB footprint. This release fixes what the log exposed.
+
+### Changed
+
+- **Adaptive render scale is now median-gated.** The decision window still evaluates 96 present-to-present intervals every ~1.6 s, but the sustained median frame time is the gate, not the 95th percentile: single slow frames (shader compiles, allocations) are not fixable by lowering resolution, and the GPU busy fraction is polluted by the same stalls. In the field log a step down fired while the game held a median of 16.7–17.2 ms (a locked 60 FPS) because a compile-spike p95 tripped the gate.
+  - A step down now requires the median above the target (+5%) for 3 consecutive windows (~5 s) **and** a GPU thread busy fraction ≥75%: x0.95, floor x0.90 of the starting scale (was 0.85 — the field log showed 0.85 still GPU-bound in the heaviest scenes while visibly soft).
+  - The climb back is no longer hostage to hitches: 5 clean windows (~8 s) with an unloaded GPU thread (<50% busy), one step per 8 s, up to the starting scale — always the ceiling. CPU-bound slow windows and stall spikes no longer reset the climb; in 0.0.4 a single spike reset a 16-second streak, so the controller never returned to 1.00x once it had stepped down.
+  - New `MELIORA_FLOOR` override (absolute scale, e.g. `0.75`) sets the floor explicitly for experiments.
+- **Texture cache emergency floor: 192 → 96 MiB.** `MinGovernedTextureSizeCapacity` formed a hard floor in `MemoryGovernor.GetTextureCacheLimit`, so every emergency trim with the cache below 192 MiB was a guaranteed no-op (`texture cache 130 MiB -> 130 MiB` in the field log). The game runs fine with the cache as low as ~47 MiB, so 96 MiB keeps a safety margin without blocking trims.
+- **Proactive memory trim fires earlier**: 3/4 of the headroom (~575 MB on an 8 GB iPhone) instead of 1/2 (~383 MB). The field log showed the process sitting below 900 MB free for a full minute before the kill, reacting only at the very end.
+- **Honest memory telemetry.** The 10-second `[Meliora] mem` line now reports `minAvail=` (the worst `os_proc_available_memory` over the window — transient dips were invisible in the instantaneous slice, which showed 1142 MB where the trim check saw 335 MB) and `texCache=` (current texture cache size, exported from the core), so the next long-session log shows what actually holds the memory.
+
+### Notes
+
+- Thresholds are constants at the top of `AdaptivePerformance.cs`; the next field log will show whether 0.90x and the +5% gate need further tuning.
+- A separate test build with `MELIORA_UNIFIED_MEMORY=1` will follow this release to measure how much of the footprint is host/device buffer duplication.
+
 ## 0.0.4 (Meliora Adaptive Engine)
 
 The first closed-loop performance controller, built on the 0.0.3 baseline logs: Super Mario Odyssey on a pre-heated iPhone holds ~56-57 FPS average but dips to 32-45 FPS in heavy scenes with `ServiceNv Wait: GPU processing thread is too slow` warnings — GPU-bound under thermal throttling. This release attacks exactly that.

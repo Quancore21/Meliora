@@ -287,5 +287,8 @@ func SN_meliora_memory_report(_ availableBytes: Int64)
 @_silgen_name("meliora_memory_trim")
 func SN_meliora_memory_trim()
 
+@_silgen_name("meliora_tex_cache_bytes")
+func SN_meliora_tex_cache_bytes() -> Int64
+
 @_silgen_name("meliora_save_caches")
 func SN_meliora_save_caches(_ force: Int32)

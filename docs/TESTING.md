@@ -38,16 +38,18 @@ Play the same game the same way for ~2 minutes (menu → into gameplay). Then co
 | Worst drops | `minFps=` in the `[Meliora] mem` lines |
 | GPU thread saturation | `GPU processing thread is too slow` warnings |
 | Memory growth | `footprint=` in the `[Meliora] mem` lines |
+| Worst free memory | `minAvail=` in the `[Meliora] mem` lines (minimum over the 10 s window) |
+| Texture cache size | `texCache=` in the `[Meliora] mem` lines |
 
 ## Test B — long session, controller behaviour
 
 Play for 10–15 minutes through heavy scenes. The `[Meliora] adaptive:` lines show what the controller saw and did:
 
-- `start <scale>, floor <scale>, target <fps>` — session start: the scale the game launched with and the floor the controller may step down to.
-- `p95=..ms median=..ms budget=..ms gpuBusy=..% scale=..` — periodic status (~every 10 s). `p95` is the 95th percentile frame time, `gpuBusy` is how busy the GPU thread was.
-- `step down ... scale=A -> B` — the render scale was lowered after sustained GPU-bound slowness. The picture becomes slightly softer; that is the feature working, not a bug.
-- `step up ... scale=A -> B` — the load passed; the scale climbs back towards the starting value, which is always the ceiling.
-- `slow frames but GPU idle ...` — slowdowns were detected but the GPU was not the bottleneck (CPU or the game's own pacing), so resolution is deliberately untouched.
+- `start <scale>, floor <scale>, target <fps>` — session start: the scale the game launched with and the floor the controller may step down to (x0.90 of the starting scale by default).
+- `p95=..ms median=..ms budget=..ms gpuBusy=..% scale=..` — periodic status (~every 10 s). The **median** is the decision signal (the sustained rate); `p95` shows spike severity, `gpuBusy` is how busy the GPU thread was.
+- `step down median=..ms budget=..ms ... scale=A -> B` — the render scale was lowered after a sustained median slowdown with a saturated GPU thread. The picture becomes slightly softer; that is the feature working, not a bug. Spikes alone never trigger a step down.
+- `step up median=..ms ... scale=A -> B` — the load passed; the scale climbs back towards the starting value, which is always the ceiling.
+- `slow frames but GPU idle ...` — sustained slowness was detected but the GPU was not the bottleneck (CPU or the game's own pacing), so resolution is deliberately untouched.
 - `at floor ...` — the controller sits at its floor and the load is still heavy. This line in a log is the most useful one for calibration.
 
 The first seconds of a session are warmup (shader cache load, JIT); the controller does not make decisions there.
@@ -58,7 +60,7 @@ For games that natively target 30 FPS, enable *Target 30 FPS* and restart the ga
 
 ## What is not testable yet
 
-Check the [changelog](../CHANGELOG.md) "Changed" notes for the current release: toggles that are described as reserved or experimental (for example *Smooth Pacing* in 0.0.4) are honest no-ops until they are wired, and env-only options (`MELIORA_UNIFIED_MEMORY`) are for deliberate experiments, not routine testing.
+Check the [changelog](../CHANGELOG.md) "Changed" notes for the current release: toggles that are described as reserved or experimental (for example *Smooth Pacing* in 0.0.4) are honest no-ops until they are wired, and env-only options (`MELIORA_UNIFIED_MEMORY`, `MELIORA_FLOOR`) are for deliberate experiments, not routine testing.
 
 ## Attaching logs to an issue
 

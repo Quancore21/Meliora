@@ -22,6 +22,7 @@ namespace Ryujinx.Graphics.Gpu
         private static long _headroomBytes = DefaultHeadroomBytes;
         private static long _sizeAtSample = -1;
         private static long _lastLogTick;
+        private static long _lastTextureCacheSize;
 
         /// <summary>
         /// Enables or disables the governor and sets how much memory must stay free.
@@ -90,6 +91,12 @@ namespace Ryujinx.Graphics.Gpu
         }
 
         /// <summary>
+        /// Meliora: last known total size of the texture cache, for memory telemetry
+        /// (the iOS app reports it in its periodic memory log).
+        /// </summary>
+        public static long LastTextureCacheSize => Volatile.Read(ref _lastTextureCacheSize);
+
+        /// <summary>
         /// Gets the maximum size the texture cache may currently have.
         /// This is called very often, so it only does a few memory reads and some arithmetic.
         /// </summary>
@@ -100,6 +107,9 @@ namespace Ryujinx.Graphics.Gpu
         /// <returns>The maximum cache size in bytes</returns>
         internal static ulong GetTextureCacheLimit(ulong constrainedMax, ulong unconstrainedMax, ulong currentSize, ulong floor)
         {
+            // The cache reports its size here on every check; keep it for telemetry.
+            Volatile.Write(ref _lastTextureCacheSize, (long)currentSize);
+
             if (Volatile.Read(ref _enabled) == 0)
             {
                 return constrainedMax;

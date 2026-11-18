@@ -899,7 +899,7 @@ struct SettingsViewNew: View {
     private var melioraExperimentalCard: some View {
         SettingsCard {
             VStack(spacing: 4) {
-                SettingsToggle(isOn: $melioraAdaptive, icon: "arrow.down.forward.circle", label: "Adaptive Resolution", infoMessage: "Watches real frame times while a game runs. When frames stay slow and the GPU is saturated, it lowers the internal render scale a little (down to 85% of what the game started with), then climbs back when the load passes.\n\nOnly helps GPU-bound slowdowns; it logs every decision as [Meliora] adaptive: in the log.\n\nTakes effect the next time a game starts.\n\nLeave ON if unsure.")
+                SettingsToggle(isOn: $melioraAdaptive, icon: "arrow.down.forward.circle", label: "Adaptive Resolution", infoMessage: "Watches real frame times while a game runs. When frames stay slow and the GPU is saturated, it lowers the internal render scale a little (down to 90% of what the game started with), then climbs back when the load passes.\n\nOnly helps GPU-bound slowdowns; it logs every decision as [Meliora] adaptive: in the log.\n\nTakes effect the next time a game starts.\n\nLeave ON if unsure.")
                 Divider()
                 SettingsToggle(isOn: $melioraTarget30, icon: "30.circle", label: "Target 30 FPS", infoMessage: "Paces the compositor at 30 FPS instead of 60. Games that already target 30 (most Switch titles) get steadier pacing and the device runs cooler.\n\nGames that target 60 will feel choppier with this on.\n\nTakes effect the next time a game starts.")
                 Divider()

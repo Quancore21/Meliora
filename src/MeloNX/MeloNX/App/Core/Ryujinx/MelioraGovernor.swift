@@ -32,6 +32,10 @@ final class MelioraGovernor {
     private var fpsMin = Double.greatestFiniteMagnitude
     private var fpsCount = 0
 
+    // Worst memory availability over the log window: a single tick can dip far below
+    // what an instantaneous slice of the last tick shows (accessed on the queue only).
+    private var minAvailable: Int64 = Int64.max
+
     private let tickInterval: TimeInterval = 0.5
     private let logEveryTicks = 20        // every 10 seconds
     private let saveEveryTicks = 1200     // every 10 minutes
@@ -62,6 +66,7 @@ final class MelioraGovernor {
         fpsSum = 0
         fpsMin = Double.greatestFiniteMagnitude
         fpsCount = 0
+        minAvailable = Int64.max
 
         guard !running else {
             // A new game started in the same app session: apply the current setting again.
@@ -139,11 +144,18 @@ final class MelioraGovernor {
         if isEnabled && available > 0 {
             SN_meliora_memory_report(available)
 
-            if available < headroom / 2 && Date().timeIntervalSince(lastTrim) > 10 {
+            // Fire the proactive trim well before the process is at risk: at 1/2 of the
+            // headroom (≈383 MB) the 0.0.4 session was already in its death spiral for a
+            // full minute without reacting. 3/4 is ≈575 MB on an 8 GB iPhone.
+            if available < headroom * 3 / 4 && Date().timeIntervalSince(lastTrim) > 10 {
                 lastTrim = Date()
                 print("[Meliora] low memory (\(available / 1_048_576) MB available), trimming caches")
                 SN_meliora_memory_trim()
             }
+        }
+
+        if available > 0 && available < minAvailable {
+            minAvailable = available
         }
 
         if tick % logEveryTicks == 0 {
@@ -178,16 +190,19 @@ final class MelioraGovernor {
         let thermal = MelioraGovernor.describe(ProcessInfo.processInfo.thermalState)
         let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         let fps = SN_get_current_fps()
+        let texCache = SN_meliora_tex_cache_bytes()
 
         let avgFps = fpsCount > 0 ? fpsSum / Double(fpsCount) : 0
         let minFps = fpsCount > 0 ? fpsMin : 0
+        let worstAvailable = minAvailable < Int64.max ? minAvailable / 1_048_576 : available / 1_048_576
 
-        print("[Meliora] mem footprint=\(footprint / 1_048_576)MB available=\(available / 1_048_576)MB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
+        print("[Meliora] mem footprint=\(footprint / 1_048_576)MB minAvail=\(worstAvailable)MB texCache=\(texCache / 1_048_576)MiB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
 
         // Start a new 10-second window.
         fpsSum = 0
         fpsMin = Double.greatestFiniteMagnitude
         fpsCount = 0
+        minAvailable = Int64.max
     }
 
     // MARK: - Background

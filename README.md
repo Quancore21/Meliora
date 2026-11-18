@@ -54,12 +54,12 @@ Meliora ships with **no** games, keys or firmware, and will never help you obtai
 
 Everything below is measured against real game logs and is on by default unless noted.
 
-- **Meliora Adaptive Engine.** A closed-loop controller that watches real present-to-present frame times while a game runs. When frames stay slow *and* the GPU thread is saturated (GPU-bound — exactly what the baseline logs show under thermal throttling), it lowers the internal render scale in small steps, down to 85% of what the game started with, and climbs back home when the load passes. CPU-bound slowdowns are detected and deliberately left alone, because lowering resolution cannot fix them.
+- **Meliora Adaptive Engine.** A closed-loop controller that watches real present-to-present frame times while a game runs. Its gate is the sustained frame rate (the median), not individual spikes: only when the game steadily runs below target *and* the GPU thread is saturated (GPU-bound — exactly what the baseline logs show under thermal throttling) does it lower the internal render scale, in small steps down to 90% of what the game started with, and it climbs back home within seconds after the load passes. CPU-bound slowdowns are detected and deliberately left alone, because lowering resolution cannot fix them.
 - **Memory Governor.** The app reports how much memory iOS still allows, and the texture caches shrink early to keep a safety margin instead of running at a fixed budget until iOS terminates the process.
 - **Thread QoS scheduling.** Emulator threads get explicit Darwin QoS classes, so the render loop and the game's main thread keep the fast CPU cores while background work (cache writes, counter queries, JIT) is pushed to the efficiency cores. Shader and pipeline compilation runs boosted too, so background compilation stops stalling the GPU thread.
 - **Frame pacing that adapts.** The compositor's spin timing follows the measured wake lateness of the OS sleep instead of a fixed guess, and the composition target can be set to 30 FPS for games that want it.
 - **Persistent pipeline cache.** MoltenVK's compiled pipelines are saved per game (on exit, on background, every 10 minutes) and reloaded on the next launch.
-- **Honest diagnostics.** The log carries `[Meliora] mem ...` (footprint, available memory, thermal state, FPS), `[Meliora] adaptive ...` (what the controller saw and did) and `[Meliora] gpu ...` (effective GPU configuration) lines every few seconds, so every performance claim can be checked against a log.
+- **Honest diagnostics.** The log carries `[Meliora] mem ...` (footprint, worst free memory over the window, texture cache size, thermal state, FPS), `[Meliora] adaptive ...` (what the controller saw and did) and `[Meliora] gpu ...` (effective GPU configuration) lines every few seconds, so every performance claim can be checked against a log.
 
 ### Settings (Advanced Options)
 
@@ -73,11 +73,11 @@ Everything below is measured against real game logs and is on by default unless 
 | MVK: Prefill Metal Command Buffers | OFF | May lower command encoding overhead |
 | MVK: Shader Compression | OFF | zlib-compresses the MoltenVK pipeline cache |
 
-Advanced environment overrides for experiments and A/B testing: `MELIORA_ADAPTIVE=0` (disable the controller), `MELIORA_TARGET_FPS` (15-240), `MELIORA_SPIN_US` (pin the compositor spin), `MELIORA_UNIFIED_MEMORY=1` (opt into the unified-memory path on MoltenVK), `MTL_HUD_ENABLED=1` (native Metal HUD with true GPU frame times).
+Advanced environment overrides for experiments and A/B testing: `MELIORA_ADAPTIVE=0` (disable the controller), `MELIORA_TARGET_FPS` (15-240), `MELIORA_FLOOR` (absolute floor for the adaptive scale, e.g. `0.75`), `MELIORA_SPIN_US` (pin the compositor spin), `MELIORA_UNIFIED_MEMORY=1` (opt into the unified-memory path on MoltenVK), `MTL_HUD_ENABLED=1` (native Metal HUD with true GPU frame times).
 
 ## Reporting performance problems
 
-Meliora writes `[Meliora] mem ...` (every 10 s: memory footprint, memory still available, thermal state, FPS), `[Meliora] adaptive ...` (controller decisions) and `[Meliora] gpu ...` (effective configuration, once per session) to its log. When a game lags or crashes, open the in-app log and attach those lines to your issue. They show whether the cause is memory, heat, CPU or GPU. A step-by-step guide for comparing releases lives in [docs/TESTING.md](docs/TESTING.md).
+Meliora writes `[Meliora] mem ...` (every 10 s: memory footprint, worst free memory over the window, texture cache size, thermal state, FPS), `[Meliora] adaptive ...` (controller decisions) and `[Meliora] gpu ...` (effective configuration, once per session) to its log. When a game lags or crashes, open the in-app log and attach those lines to your issue. They show whether the cause is memory, heat, CPU or GPU. A step-by-step guide for comparing releases lives in [docs/TESTING.md](docs/TESTING.md).
 
 ## Build it yourself
 

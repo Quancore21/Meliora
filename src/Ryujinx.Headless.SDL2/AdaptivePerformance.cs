@@ -10,16 +10,20 @@ namespace Ryujinx.Headless.SDL2
     /// render loop itself.
     ///
     /// Every presented frame contributes its present-to-present interval to a ring
-    /// buffer. Once per window (~1.6s at 60 FPS) the controller evaluates the 95th
-    /// percentile frame time against the pacing budget. Frames are only considered
-    /// "ours to fix" when the GPU thread is saturated at the same time (GPU-bound);
-    /// slow frames with an idle GPU thread mean the bottleneck is on the CPU or in
-    /// the game's own pacing, and dropping resolution cannot fix either.
+    /// buffer. Once per window (~1.6s at 60 FPS) the controller evaluates the median
+    /// frame time against the pacing target. The median, not the 95th percentile, is
+    /// the gate: single slow frames (shader compiles, allocations) are not fixable by
+    /// lowering the resolution, and the GPU thread busy fraction is polluted by the
+    /// same stalls, so only a sustained median slowdown backed by a saturated GPU
+    /// thread justifies a step down.
     ///
-    /// After three consecutive failing windows it steps the internal render scale
-    /// down (x0.95, then x0.90, floor x0.85 of the scale the game was started with,
-    /// never below 0.5x absolute), at most one step per 5s. After ~16s of green
-    /// windows it climbs back towards the starting scale, one step per 10s.
+    /// After three consecutive slow, GPU-bound windows it steps the internal render
+    /// scale down (x0.95, floor x0.90 of the scale the game was started with, never
+    /// below 0.5x absolute, MELIORA_FLOOR overrides as an absolute scale), at most one
+    /// step per 5s. After ~8s of clean windows with an unloaded GPU thread it climbs
+    /// back towards the starting scale, one step per 8s. Slow windows with an idle GPU
+    /// thread are logged as CPU-bound and deliberately left alone; they do not reset
+    /// the climb.
     ///
     /// Only <see cref="GraphicsConfig.ResScale"/> is written: the scale the game was
     /// started with is the ceiling, no profile is touched, and the controller always
@@ -31,17 +35,17 @@ namespace Ryujinx.Headless.SDL2
         private const int WindowSize = 96;               // samples per evaluation window
         private const int WarmupPresents = 90;           // shader cache load and first-frame spikes
         private const int WarmupMs = 5000;               // same, as a minimum wall-clock time
-        private const double BudgetTolerance = 1.12;     // p95 may exceed the budget by this much
-        private const int FailWindowsToStepDown = 3;     // ~5s of sustained overload
-        private const int PassWindowsToStepUp = 10;      // ~16s of sustained green
+        private const double MedianTolerance = 1.05;     // the sustained rate may sit this far above the target before acting
+        private const int FailWindowsToStepDown = 3;     // ~5s of sustained GPU-bound slowness
+        private const int PassWindowsToStepUp = 5;       // ~8s of clean windows at the current scale
         private const int DownCooldownMs = 5000;         // max one down-step per 5s
-        private const int UpCooldownMs = 10000;          // max one up-step per 10s
+        private const int UpCooldownMs = 8000;           // max one up-step per 8s
         private const float DownStep = 0.95f;            // each down-step, cumulative
-        private const float FloorFraction = 0.85f;       // floor relative to the starting scale
+        private const float FloorFraction = 0.90f;       // floor relative to the starting scale
         private const float AbsoluteFloor = 0.5f;
         private const float UpStep = 1.06f;
-        private const double GpuBusyForDownStep = 0.70;  // GPU thread busy fraction that means GPU-bound
-        private const double GpuBusyForUpStep = 0.80;    // don't climb while the GPU is busier than this
+        private const double GpuBusyForDownStep = 0.75;  // GPU thread busy fraction that means GPU-bound
+        private const double GpuBusyForUpStep = 0.50;    // don't climb while the GPU thread is busier than this
         private const double GpuIdleForCpuBoundLog = 0.35;
         private const double MaxSampleMs = 100;          // clamp: pauses and loads are not frame times
         private const int LogEveryWindows = 6;           // periodic status line, ~10s apart
@@ -69,6 +73,9 @@ namespace Ryujinx.Headless.SDL2
 
         private static float _startScale = -1f;
         private static float _scale = -1f;
+
+        // Optional absolute floor override (MELIORA_FLOOR, e.g. 0.75); 0 = use FloorFraction.
+        private static readonly float _floorOverride = ParseFloorOverride();
 
         /// <summary>
         /// Meliora: clears all per-game controller state. Called once per game launch,
@@ -98,6 +105,34 @@ namespace Ryujinx.Headless.SDL2
             _lastCpuBoundLogMs = 0;
             _startScale = -1f;
             _scale = -1f;
+        }
+
+        /// <summary>
+        /// Meliora: the smallest scale the controller may step down to for a game that
+        /// started at <paramref name="startScale"/>. MELIORA_FLOOR overrides the default
+        /// fraction with an absolute scale (clamped into [AbsoluteFloor, startScale]).
+        /// </summary>
+        private static float GetFloorScale(float startScale)
+        {
+            if (_floorOverride > 0f)
+            {
+                return Math.Max(AbsoluteFloor, Math.Min(_floorOverride, startScale));
+            }
+
+            return Math.Max(AbsoluteFloor, startScale * FloorFraction);
+        }
+
+        private static float ParseFloorOverride()
+        {
+            string raw = Environment.GetEnvironmentVariable("MELIORA_FLOOR");
+
+            if (float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value) &&
+                value >= AbsoluteFloor && value <= 1f)
+            {
+                return value;
+            }
+
+            return 0f;
         }
 
         /// <summary>
@@ -139,7 +174,7 @@ namespace Ryujinx.Headless.SDL2
                 _lastIterationTicks = nowTicks;
                 _lastPresentTicks = presented > 0 ? nowTicks : -1;
 
-                Console.WriteLine($"[Meliora] adaptive: start {_startScale:0.00}x, floor {Math.Max(AbsoluteFloor, _startScale * FloorFraction):0.00}x, target {MelioraFramePacing.TargetHz} fps");
+                Console.WriteLine($"[Meliora] adaptive: start {_startScale:0.00}x, floor {GetFloorScale(_startScale):0.00}x, target {MelioraFramePacing.TargetHz} fps");
 
                 return;
             }
@@ -230,36 +265,57 @@ namespace Ryujinx.Headless.SDL2
             _busyTicks = 0;
             _wallTicks = 0;
 
-            // Budget: the pacing target, but never below what the game itself sustains
-            // in this window. A game that steadily runs 30 FPS is not overloaded.
-            double budgetMs = Math.Max(1000.0 / MelioraFramePacing.TargetHz, median) * BudgetTolerance;
+            // Budget: the pacing target with a small tolerance. The gate is the median,
+            // not the 95th percentile: single slow frames (shader compiles, allocations)
+            // are not fixable by lowering the resolution. A game that steadily runs
+            // slower than the target while the GPU thread is saturated still steps down;
+            // a game that steadily runs at its own lower rate with a free GPU thread
+            // does not.
+            double budgetMs = 1000.0 / MelioraFramePacing.TargetHz * MedianTolerance;
 
-            bool slow = p95 > budgetMs;
+            bool slow = median > budgetMs;
+            bool gpuBound = busyFraction >= GpuBusyForDownStep;
             bool periodicLog = _windowCount % LogEveryWindows == 0;
 
-            if (slow)
+            if (slow && gpuBound)
             {
+                // Three consecutive windows like this are the proof that the current
+                // scale is insufficient: the GPU thread is saturated and even the median
+                // frame is out of budget. Reset the climb streak.
                 _failStreak++;
                 _passStreak = 0;
-
-                if (busyFraction < GpuIdleForCpuBoundLog && nowMs - _lastCpuBoundLogMs >= 10000)
-                {
-                    _lastCpuBoundLogMs = nowMs;
-
-                    Console.WriteLine($"[Meliora] adaptive: slow frames but GPU idle (gpuBusy={(int)(busyFraction * 100)}%), not touching scale (CPU-bound?)");
-                }
             }
             else
             {
-                _passStreak++;
+                // A slow but CPU-bound window says nothing about the scale, and it must
+                // not pre-charge the down-step counter either: otherwise one later
+                // GPU-bound window would step down immediately instead of after three
+                // consecutive GPU-bound windows.
                 _failStreak = 0;
+
+                if (slow)
+                {
+                    if (busyFraction < GpuIdleForCpuBoundLog && nowMs - _lastCpuBoundLogMs >= 10000)
+                    {
+                        _lastCpuBoundLogMs = nowMs;
+
+                        Console.WriteLine($"[Meliora] adaptive: slow frames but GPU idle (gpuBusy={(int)(busyFraction * 100)}%), not touching scale (CPU-bound?)");
+                    }
+                }
+                else if (busyFraction < GpuBusyForUpStep)
+                {
+                    // Count only clean windows with an unloaded GPU thread: a window that
+                    // is at the target rate but keeps the GPU thread busy is not proof
+                    // that the scale can climb, yet it must not reset the streak either.
+                    _passStreak++;
+                }
             }
 
-            float floorScale = Math.Max(AbsoluteFloor, _startScale * FloorFraction);
+            float floorScale = GetFloorScale(_startScale);
             bool stepped = false;
 
             if (slow &&
-                busyFraction >= GpuBusyForDownStep &&
+                gpuBound &&
                 _failStreak >= FailWindowsToStepDown &&
                 nowMs - _lastStepMs >= DownCooldownMs)
             {
@@ -267,7 +323,7 @@ namespace Ryujinx.Headless.SDL2
                 {
                     float next = Math.Max(floorScale, _scale * DownStep);
 
-                    Console.WriteLine($"[Meliora] adaptive: step down p95={p95:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
+                    Console.WriteLine($"[Meliora] adaptive: step down median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
 
                     _scale = next;
                     GraphicsConfig.ResScale = _scale;
@@ -278,11 +334,11 @@ namespace Ryujinx.Headless.SDL2
                 }
                 else if (periodicLog)
                 {
-                    Console.WriteLine($"[Meliora] adaptive: at floor ({floorScale:0.00}x) p95={p95:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}%");
+                    Console.WriteLine($"[Meliora] adaptive: at floor ({floorScale:0.00}x) median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}%");
                 }
             }
             else if (!slow &&
-                busyFraction <= GpuBusyForUpStep &&
+                busyFraction < GpuBusyForUpStep &&
                 _passStreak >= PassWindowsToStepUp &&
                 nowMs - _lastStepMs >= UpCooldownMs &&
                 _scale < _startScale - 0.001f)
@@ -295,7 +351,7 @@ namespace Ryujinx.Headless.SDL2
                     next = _startScale;
                 }
 
-                Console.WriteLine($"[Meliora] adaptive: step up p95={p95:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
+                Console.WriteLine($"[Meliora] adaptive: step up median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
 
                 _scale = next;
                 GraphicsConfig.ResScale = _scale;

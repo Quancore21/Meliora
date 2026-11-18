@@ -796,6 +796,12 @@ namespace Ryujinx.Headless.SDL2
             MemoryGovernor.RequestEmergencyTrim();
         }
 
+        [UnmanagedCallersOnly(EntryPoint = "meliora_tex_cache_bytes")]
+        public static long MelioraTexCacheBytes()
+        {
+            return MemoryGovernor.LastTextureCacheSize;
+        }
+
         [UnmanagedCallersOnly(EntryPoint = "meliora_save_caches")]
         public static void MelioraSaveCaches(int force)
         {
