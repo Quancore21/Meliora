@@ -11,7 +11,23 @@
 
 import Foundation
 import UIKit
+import Darwin
 import os
+
+/// Writes one complete, timestamped line to the captured stdout in a single `write`.
+/// Swift's `print` is block-buffered when stdout is a pipe, which used to split lines
+/// at 4 KB boundaries and merge them with the C# log output.
+private func melioraLog(_ message: String) {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+
+    let line = "\(formatter.string(from: Date())) \(message)\n"
+
+    line.withCString { pointer in
+        _ = write(STDOUT_FILENO, pointer, strlen(pointer))
+    }
+}
 
 final class MelioraGovernor {
     static let shared = MelioraGovernor()
@@ -39,6 +55,12 @@ final class MelioraGovernor {
     private let tickInterval: TimeInterval = 0.5
     private let logEveryTicks = 20        // every 10 seconds
     private let saveEveryTicks = 1200     // every 10 minutes
+
+    // Normal texture-cache floor (MinGovernedTextureSizeCapacity in AutoDeleteCache.cs).
+    // A proactive trim below this cannot shrink the cache any further, so calling it
+    // every 10 seconds only runs a useless GC and floods the log. A real iOS memory
+    // warning still reaches the core and may use its emergency floor (half of this).
+    private let textureCacheTrimFloor: Int64 = 96 * 1024 * 1024
 
     private init() {}
 
@@ -84,7 +106,7 @@ final class MelioraGovernor {
         headroom = Int64(min(max(physical * 0.10, 512.0 * megabyte), 1024.0 * megabyte))
 
         SN_meliora_memory_configure(isEnabled ? 1 : 0, headroom)
-        print("[Meliora] governor \(isEnabled ? "on" : "off"), physical \(Int(physical / megabyte)) MB, headroom \(headroom / 1_048_576) MB")
+        melioraLog("[Meliora] governor \(isEnabled ? "on" : "off"), physical \(Int(physical / megabyte)) MB, headroom \(headroom / 1_048_576) MB")
         reportAvailableMemory()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -105,7 +127,7 @@ final class MelioraGovernor {
 
         observers.append(center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { _ in
             let state = MelioraGovernor.describe(ProcessInfo.processInfo.thermalState)
-            print("[Meliora] thermal state changed: \(state)")
+            melioraLog("[Meliora] thermal state changed: \(state)")
         })
 
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
@@ -148,9 +170,16 @@ final class MelioraGovernor {
             // headroom (≈383 MB) the 0.0.4 session was already in its death spiral for a
             // full minute without reacting. 3/4 is ≈575 MB on an 8 GB iPhone.
             if available < headroom * 3 / 4 && Date().timeIntervalSince(lastTrim) > 10 {
-                lastTrim = Date()
-                print("[Meliora] low memory (\(available / 1_048_576) MB available), trimming caches")
-                SN_meliora_memory_trim()
+                // Once the texture cache is at its normal floor, another trim only
+                // runs a GC and logs a no-op. The memory warning path below still
+                // calls the core, where a real emergency may use a lower floor.
+                let texCache = SN_meliora_tex_cache_bytes()
+
+                if texCache > textureCacheTrimFloor {
+                    lastTrim = Date()
+                    melioraLog("[Meliora] low memory (\(available / 1_048_576) MB available, texCache \(texCache / 1_048_576) MiB), trimming caches")
+                    SN_meliora_memory_trim()
+                }
             }
         }
 
@@ -177,7 +206,7 @@ final class MelioraGovernor {
     }
 
     private func handleMemoryWarning() {
-        print("[Meliora] iOS memory warning received")
+        melioraLog("[Meliora] iOS memory warning received")
 
         if isEnabled {
             lastTrim = Date()
@@ -196,7 +225,7 @@ final class MelioraGovernor {
         let minFps = fpsCount > 0 ? fpsMin : 0
         let worstAvailable = minAvailable < Int64.max ? minAvailable / 1_048_576 : available / 1_048_576
 
-        print("[Meliora] mem footprint=\(footprint / 1_048_576)MB minAvail=\(worstAvailable)MB texCache=\(texCache / 1_048_576)MiB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
+        melioraLog("[Meliora] mem footprint=\(footprint / 1_048_576)MB minAvail=\(worstAvailable)MB texCache=\(texCache / 1_048_576)MiB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
 
         // Start a new 10-second window.
         fpsSum = 0

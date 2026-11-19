@@ -8,6 +8,7 @@
 import UIKit
 import UniformTypeIdentifiers
 import Foundation
+import Darwin
 import ObjectiveC.runtime
 import Security
 
@@ -311,6 +312,12 @@ func redirectStdIOToFile(filename: String) {
 
     dup2(fd, STDOUT_FILENO)
     dup2(fd, STDERR_FILENO)
+
+    // This constructor runs before MeloNXApp.init() and before any app print.
+    // stdout/stderr are file-backed, so libc would otherwise use 4 KB block
+    // buffering and split lines; setvbuf must run before the first write.
+    setvbuf(stdout, nil, _IOLBF, 0)
+    setvbuf(stderr, nil, _IOLBF, 0)
 
     close(fd)
 }

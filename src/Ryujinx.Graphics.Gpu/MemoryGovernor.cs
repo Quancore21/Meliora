@@ -97,6 +97,12 @@ namespace Ryujinx.Graphics.Gpu
         public static long LastTextureCacheSize => Volatile.Read(ref _lastTextureCacheSize);
 
         /// <summary>
+        /// Meliora: last value reported by the platform, in bytes, or a negative value
+        /// when the platform has not reported memory yet or the governor is disabled.
+        /// </summary>
+        public static long AvailableBytes => Volatile.Read(ref _availableBytes);
+
+        /// <summary>
         /// Gets the maximum size the texture cache may currently have.
         /// This is called very often, so it only does a few memory reads and some arithmetic.
         /// </summary>
@@ -125,7 +131,12 @@ namespace Ryujinx.Graphics.Gpu
 
             if (Volatile.Read(ref _trimRequested) != 0 && Interlocked.Exchange(ref _trimRequested, 0) != 0)
             {
-                return Math.Min(unconstrainedMax, Math.Max(currentSize / 2, floor));
+                // A real emergency trim may go below the normal floor. The normal
+                // floor keeps the cache useful; the emergency floor (half of it)
+                // returns memory when iOS is already warning about pressure.
+                ulong emergencyFloor = floor / 2;
+
+                return Math.Min(unconstrainedMax, Math.Max(currentSize / 2, emergencyFloor));
             }
 
             long headroom = Volatile.Read(ref _headroomBytes);

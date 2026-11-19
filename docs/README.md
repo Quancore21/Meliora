@@ -30,7 +30,7 @@ This directory contains the documentation for Meliora, an unofficial Nintendo Sw
 ### Performance and testing
 
 - [PERFORMANCE.md](PERFORMANCE.md) — the adaptive render-scale controller, the memory governor, their constants, calibration history and log interpretation.
-- [TESTING.md](TESTING.md) — test matrix (short session, long session, Target 30, Unified Memory experiment), reference baselines, acceptance criteria and reporting template.
+- [TESTING.md](TESTING.md) — test matrix (short session, long session, Target 30, closed Unified Memory experiment), reference baselines, acceptance criteria and reporting template.
 
 ### Architecture and development
 

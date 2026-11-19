@@ -20,10 +20,13 @@ namespace Ryujinx.Headless.SDL2
     /// After three consecutive slow, GPU-bound windows it steps the internal render
     /// scale down (x0.95, floor x0.90 of the scale the game was started with, never
     /// below 0.5x absolute, MELIORA_FLOOR overrides as an absolute scale), at most one
-    /// step per 5s. After ~8s of clean windows with an unloaded GPU thread it climbs
-    /// back towards the starting scale, one step per 8s. Slow windows with an idle GPU
-    /// thread are logged as CPU-bound and deliberately left alone; they do not reset
-    /// the climb.
+    /// step per 5s. A step that would land within 0.01 of the floor snaps to the floor,
+    /// so the controller never creates a pointless 0.9025x intermediate value.
+    /// After ~8s of clean windows with an unloaded GPU thread it climbs back towards
+    /// the starting scale, one step per 8s, but only while the process has at least
+    /// 384 MB available (or the platform has not reported a value yet). Slow windows
+    /// with an idle GPU thread are logged as CPU-bound and deliberately left alone;
+    /// they do not reset the climb.
     ///
     /// Only <see cref="GraphicsConfig.ResScale"/> is written: the scale the game was
     /// started with is the ceiling, no profile is touched, and the controller always
@@ -47,6 +50,7 @@ namespace Ryujinx.Headless.SDL2
         private const double GpuBusyForDownStep = 0.75;  // GPU thread busy fraction that means GPU-bound
         private const double GpuBusyForUpStep = 0.50;    // don't climb while the GPU thread is busier than this
         private const double GpuIdleForCpuBoundLog = 0.35;
+        private const long UpStepMinAvailableBytes = 384L * 1024 * 1024; // don't climb into memory pressure
         private const double MaxSampleMs = 100;          // clamp: pauses and loads are not frame times
         private const int LogEveryWindows = 6;           // periodic status line, ~10s apart
 
@@ -319,11 +323,19 @@ namespace Ryujinx.Headless.SDL2
                 _failStreak >= FailWindowsToStepDown &&
                 nowMs - _lastStepMs >= DownCooldownMs)
             {
-                if (_scale > floorScale + 0.001f)
+                if (_scale > floorScale + 0.01f)
                 {
                     float next = Math.Max(floorScale, _scale * DownStep);
 
-                    Console.WriteLine($"[Meliora] adaptive: step down median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
+                    // Snap to the floor instead of creating a separate 0.9025x scale
+                    // whose next step to 0.9000x lives only in the third decimal and
+                    // recreates the host textures for a 0.25% linear change.
+                    if (next - floorScale < 0.01f)
+                    {
+                        next = floorScale;
+                    }
+
+                    Console.WriteLine($"[Meliora] adaptive: step down median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.000}x -> {next:0.000}x");
 
                     _scale = next;
                     GraphicsConfig.ResScale = _scale;
@@ -343,21 +355,37 @@ namespace Ryujinx.Headless.SDL2
                 nowMs - _lastStepMs >= UpCooldownMs &&
                 _scale < _startScale - 0.001f)
             {
-                float next = _scale * UpStep;
+                long available = MemoryGovernor.AvailableBytes;
 
-                if (next > _startScale - 0.01f)
+                if (available >= 0 && available < UpStepMinAvailableBytes)
                 {
-                    // Snap home instead of asymptotically creeping towards it.
-                    next = _startScale;
+                    // The load has passed, but the process is still close to the
+                    // memory limit. Climbing now would add texture memory exactly
+                    // when the next allocation is most likely to fail. Stay at the
+                    // current scale and try again when memory recovers.
+                    if (periodicLog)
+                    {
+                        Console.WriteLine($"[Meliora] adaptive: step up blocked, available={available / (1024 * 1024)}MB < {UpStepMinAvailableBytes / (1024 * 1024)}MB, scale={_scale:0.00}x");
+                    }
                 }
+                else
+                {
+                    float next = _scale * UpStep;
 
-                Console.WriteLine($"[Meliora] adaptive: step up median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.00}x -> {next:0.00}x");
+                    if (next > _startScale - 0.01f)
+                    {
+                        // Snap home instead of asymptotically creeping towards it.
+                        next = _startScale;
+                    }
 
-                _scale = next;
-                GraphicsConfig.ResScale = _scale;
-                _lastStepMs = nowMs;
-                _passStreak = 0;
-                stepped = true;
+                    Console.WriteLine($"[Meliora] adaptive: step up median={median:0.0}ms budget={budgetMs:0.0}ms gpuBusy={(int)(busyFraction * 100)}% scale={_scale:0.000}x -> {next:0.000}x");
+
+                    _scale = next;
+                    GraphicsConfig.ResScale = _scale;
+                    _lastStepMs = nowMs;
+                    _passStreak = 0;
+                    stepped = true;
+                }
             }
 
             if (periodicLog && !stepped)

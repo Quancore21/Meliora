@@ -1,6 +1,6 @@
 # Testing a Meliora release
 
-Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.5, including what the first 0.0.5 field runs have and have not shown.
+Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.6, including what the 0.0.5 and 0.0.6 field runs have and have not shown.
 
 Testing is manual and runs on a real device. CI builds and packages the app; it cannot measure FPS, thermal behaviour or memory pressure.
 
@@ -67,14 +67,31 @@ Known 0.0.5 defects found in these logs:
 - Swift `[Meliora]` lines have no timestamp and can be merged with C# lines; exact trim times are approximate.
 - Memory pressure at the kingdom transition remains; the texture cache was only 84–88 MiB at the peak.
 
+### 0.0.6 (build 25, SMO 1.3.0, iPhone 17, iOS 27.2.1, one session)
+
+| Metric | Value |
+| --- | --- |
+| Length | 10:06 |
+| Peak footprint | 5779 MB |
+| Minimum available | 358 MB |
+| Texture cache | 192 MiB peak, then 95 MiB |
+| Emergency / low-memory trims | 18 / 16 |
+| `GPU processing thread is too slow` | 11 |
+| FPS median / mean | 56 / 54.6 |
+| Adaptive scale | 1.00x for the whole run |
+| Thermal | fair → serious at 1:22 |
+| Exit | clean (`TerminationRequested` → `ServiceNv Close`) |
+
+The logging fix is validated: this log has zero merged or timestamp-less `[Meliora]` lines. The run passes the applicable Test B criteria, but it never stepped down or up, so snap-to-floor and the 384 MB up-step guard were not exercised. The final build 29 (2026-11-20) passed a short smoke test: Test C validated at 30 FPS, idle-trim fix confirmed (no repeated trims at the 96 MiB floor), icon verified in the IPA; snap-to-floor and the 384 MB guard remain unexercised because no down-step occurred.
+
 ## Test matrix
 
 | Test | Length | Purpose |
 | --- | --- | --- |
 | A — short session | ~2 minutes | Compare average/min FPS, GPU warnings and memory growth with the previous release. |
 | B — long session | 10–15 minutes | Check the controller's decisions: false step downs, climb-back, time at the floor. |
-| C — Target 30 | 2–5 minutes | Check pacing and the adaptive budget at 30 FPS. |
-| D — Unified Memory experiment | 10–15 minutes | Compare footprint and FPS with the standard build. |
+| C — Target 30 | 2–5 minutes | Check pacing and the adaptive budget at 30 FPS. Validated on the 0.0.6 build 29. |
+| D — Unified Memory experiment | 10–15 minutes | Closed: compared footprint and GPU load with the standard build; no benefit. |
 | E — optional floor experiment | 10–15 minutes | Compare a different `MELIORA_FLOOR` value on the same route. |
 
 ## Test A — short session, comparable to an older release
@@ -107,7 +124,7 @@ Play for 10–15 minutes through heavy scenes. The `[Meliora] adaptive:` lines s
 - **Memory.** `minAvail=` and `texCache=` should be present. If a trim happened, the core log should show the cache actually shrinking. A cache parked at 96 MiB means the governor has done what it can; the remaining pressure is outside the texture cache.
 - **Stability.** The process should survive the session. If iOS kills it, attach the last mem lines and note how long it ran.
 
-### Acceptance criteria for 0.0.5
+### Acceptance criteria for 0.0.6
 
 The release is considered validated when a 10–15 minute run on the reference route shows:
 
@@ -121,7 +138,7 @@ The release is considered validated when a 10–15 minute run on the reference r
 | Memory telemetry | `minAvail=` and `texCache=` present; trims visible if they fire. |
 | Stability | No unexplained crash or jetsam kill. |
 
-**0.0.5 status (2026-11-19): field-tested, not fully validated.** The three runs are 4.5–6.1 minutes. They pass the decision checks (no false step downs, evidence for every step, climb-back observed) but do not meet the 10–15 minute length, and run #1 has no confirmed termination. The release notes therefore describe 0.0.5 as field-tested, not fully validated.
+**0.0.6 status (2026-11-20): build 25 passes the applicable Test B criteria, build 29 passes Test C.** The build 25 run is 10:06, made no false step down, has clean logging and exited normally. The build 29 smoke test (2026-11-20) validated Test C at 30 FPS (29–30 FPS, `budget=35.0ms`, no false step down, clean exit), confirmed the idle-trim fix in the field (texture cache at 92–96 MiB with `minAvail` 470–590 MB produced zero repeated trims; the one trim that fired had `texCache 102 MiB`), observed the emergency trim floor below 96 MiB after iOS memory warnings (76–79 MiB; 47 MiB during a level load) and verified the Liquid Glass icon in the IPA. A 60 FPS session at 2.00x crashed from memory pressure in ~45 s (`minAvail` 260 MB, seven warnings) — scales above 1.00x are not viable on 8 GB. No run stepped down, so the snap-to-floor, three-decimal step log and 384 MB guard branches remain code-verified only. The three 0.0.5 runs remain field evidence for the controller policy but are shorter than Test B.
 
 If a criterion fails, keep the log and open an issue with the relevant lines. Do not change multiple thresholds at once; a log with two changes cannot tell you which one mattered.
 
@@ -136,30 +153,28 @@ Check:
 - Pacing feels steadier and the device runs cooler, if the game is actually 30 FPS-bound.
 - A 60 FPS game will feel choppier with the toggle on; that is expected.
 
-On 2026-11-18 a 38-second smoke run confirmed target 30, budget 35.0 ms, median 33.3 ms, `gpuBusy` 6%, scale 1.00x. This validates the target wiring only; a sustained 30 FPS run is still pending.
+On 2026-11-18 a 38-second smoke run confirmed target 30, budget 35.0 ms, median 33.3 ms, `gpuBusy` 6%, scale 1.00x. The final 0.0.6 build 29 then ran a sustained session (2026-11-20, ~1:55): `adaptive: start 1.00x, floor 0.90x, target 30 fps`, `budget=35.0ms`, 29–30 FPS held, no false step down despite p95 spikes to 70.7 ms, two iOS memory warnings, clean exit. Test C passes; a 10–15-minute 30 FPS run would add margin but is no longer required.
 
-## Test D — Unified Memory experiment
+## Test D — Unified Memory experiment (closed)
 
-This test uses a separate build with `MELIORA_UNIFIED_MEMORY=1`; it is not the release build. Do not mix its results with test A/B.
+This test used a separate build with `MELIORA_UNIFIED_MEMORY=1`; it is not the release build. Do not mix its results with test A/B.
 
-The original 2661781375 → 512560049 route is no longer reproducible: the save has progressed past that transition. Use the current save and run both builds on the same route, including a kingdom transition if one is available. The comparison must be paired:
+The original 2661781375 → 512560049 route is no longer reproducible: the save has progressed past that transition. A paired 0.0.5 control was therefore not run. The 0.0.5 UnifiedMemory build was compared with the 0.0.6 build 25 `DedicatedMemory` reference on the same device. The runs differ in length (14:27 vs 10:06) and thermal state (the UnifiedMemory run was hotter), so FPS and trim counts are not a clean pair; the footprint result is still usable.
 
-1. Run 10–15 minutes on the standard 0.0.5 IPA from the current save.
-2. Let the device cool to the same thermal state.
-3. Run 10–15 minutes on the UnifiedMemory build from the same save.
-4. Keep both logs and compare the same part of the route.
-
-Do not compare a 5-minute run with a 15-minute run; the memory peak and the thermal state will not be comparable.
-
-| Metric | Where to look | Target |
+| Metric | UnifiedMemory (0.0.5) | DedicatedMemory (0.0.6) |
 | --- | --- | --- |
-| Effective memory type | `memoryType=` in the `[Meliora] gpu:` line | `UnifiedMemory` |
-| Peak footprint | `footprint=` in the mem lines | Below the paired 0.0.5 control; report the delta and the absolute peak (the original absolute target was 5.0–5.2 GB, but 0.0.5 #1 peaked at 6.03 GB) |
-| FPS in heavy scenes | `avgFps=` / `minFps=` and the adaptive medians | No regression versus the standard build |
-| Memory trims | `LogShrink`, low-memory and emergency-trim lines | No more than the control, and no repeated no-ops below 200 MB available |
-| Stability | Session length and termination markers | Normal exit, as 0.0.5 #2/#3 did |
+| Effective memory type | `UnifiedMemory` | `DedicatedMemory` |
+| Peak footprint | 5725 MB | 5779 MB |
+| `minAvail` from mem lines | 405 MB | 358 MB |
+| Last `LogShrink` available | 323 MiB | — |
+| Emergency / low-memory trims | 61 / 52 | 18 / 16 |
+| `GPU processing thread is too slow` | 27 | 11 |
+| Median `gpuBusy` (first 9.5 min) | 46% (peak 96%) | 30% (peak 61%) |
+| FPS median / mean | 55 / 52.6 | 56 / 54.6 |
+| Adaptive steps | 1.00 → 0.95 → 1.00 | none |
+| Exit | clean | clean |
 
-If footprint does not improve, or FPS regresses, the experiment is rejected and the default path stays. Record both logs; the comparison is the deliverable.
+The 323 MiB figure is the last `LogShrink` in the 0.0.5 UnifiedMemory log; the final `[Meliora] mem` lines were lost because the 0.0.5 process still had them in its 4 KB stdout buffer. The UnifiedMemory run does not show a footprint win (the 54 MB peak difference is within run-to-run noise), and it keeps the GPU thread busier: disabling buffer migration puts every buffer in host memory and adds work through MoltenVK. The experiment is rejected, the test branch is not merged, and `MELIORA_UNIFIED_MEMORY` stays off.
 
 ## Test E — optional floor experiment
 
@@ -187,19 +202,19 @@ The full interpretation is in [PERFORMANCE.md](PERFORMANCE.md#reading-the-log). 
 [Meliora] gpu: ... memoryType=... tbdr=... mvk: ...
 [Meliora] qos: enabled=... perfCores=... applied=...
 [Meliora] governor on/off, physical ... MB, headroom ... MB
-[Meliora] low memory (... MB available), trimming caches
+[Meliora] low memory (... MB available, texCache ... MiB), trimming caches
 [Meliora] thermal state changed: ...
 [Meliora] iOS memory warning received
 ```
 
-The periodic adaptive status is emitted every six windows (~10 s). A step line replaces the periodic line for that window. Warmup produces no decisions.
+The periodic adaptive status is emitted every six windows (~10 s). A step line replaces the periodic line for that window. Warmup produces no decisions. A proactive low-memory line is emitted only when the cache is above its 96 MiB floor; at the floor the governor skips the request, so the absence of repeated `low memory` lines while `texCache=95MiB` is expected.
 
-Until 0.0.6, Swift-emitted `[Meliora] mem`, `low memory` and `governor` lines have no timestamp and can be split or merged with C# lines (for example `Gamepad2026-11-17 ...`). Use the nearest C# `MeloNX[...]` timestamp and treat sub-minute timing as approximate. 0.0.6 adds timestamps, line-buffered stdout and a per-pipe remainder buffer.
+The 0.0.6 build 25 log has zero merged or timestamp-less `[Meliora]` lines. In 0.0.5 and earlier, the Swift-emitted `[Meliora] mem`, `low memory` and `governor` lines have no timestamp and can be split or merged with C# lines (for example `Gamepad2026-11-17 ...`); use the nearest C# `MeloNX[...]` timestamp and treat sub-minute timing as approximate.
 
 ## What is not testable yet
 
 - *Smooth Pacing* is reserved. The core can follow a changed target, but the app does not re-apply settings mid-session, so the switch is a no-op in 0.0.5.
-- Unified Memory is an experiment, not a release feature.
+- Unified Memory was tested and rejected: no footprint benefit and a busier GPU thread. It is not a release feature.
 - There are no per-game profiles or per-game adaptive tuning.
 - Compatibility is inherited from the emulator core; Meliora does not maintain a game compatibility list.
 - CI does not run a performance test. A green build means the app compiles and the IPAs are structurally valid, not that a game runs well.
@@ -215,6 +230,6 @@ Export the log from the in-app Logs view and include:
 5. The `[Meliora] mem`, `[Meliora] adaptive` and `[Meliora] gpu` lines, ideally the whole log around the event.
 6. What you expected, what happened, and the shortest steps that reproduce it.
 7. For a step-down or memory problem: the periodic lines before and after the event.
-8. If `[Meliora]` lines are merged or have no timestamp, say so. This is a known 0.0.5 logging defect; the C# lines and the adaptive decisions are still usable.
+8. If `[Meliora]` lines are merged or have no timestamp, say so. This is a known 0.0.5 logging defect, fixed in 0.0.6; the C# lines and the adaptive decisions are still usable.
 
 State clearly whether the run is test A, B, C, D or E. A report without these lines cannot be compared with the baselines.

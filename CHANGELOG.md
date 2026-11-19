@@ -1,20 +1,72 @@
 # Changelog
 
-## Unreleased
+## 0.0.6 (2026-11-20)
 
-Planned 0.0.6 fixes. Not released, not yet validated on device.
+0.0.6 fixes and the Liquid Glass app icon. Build 25 (2026-11-19) field-tested the logging fix and passed the 10-minute Test B with no false step down. The final build 29 (2026-11-20) was then smoke-tested on device: the 30 FPS target path ran for the first time and held 29–30 FPS with no false step down, and the idle-trim fix held with zero repeated trims. No down-step occurred in any run, so snap-to-floor and the three-decimal step log are still code-verified only.
 
 ### Fixed
 
 - **Duplicate render-target resize at the floor.** A down-step from 0.95x produced 0.9025x; the next step landed on 0.9000x and logged `0.90x -> 0.90x`. The 0.25% change recreated the host textures and views again for no visible benefit. The controller now snaps to the floor when the next step would land within 0.01 of it, and step lines print three decimals.
-- **Broken `[Meliora]` log lines.** The Swift governor wrote through buffered `print`, and `LogCapture` split each pipe chunk independently, so lines could be merged or lose their timestamp. `stdout` is now line-buffered, the governor writes complete timestamped lines, and `LogCapture` keeps the incomplete tail of each pipe until the newline arrives.
+- **Broken `[Meliora]` log lines.** The Swift governor wrote through buffered `print`, and `LogCapture` split each pipe chunk independently, so lines could be merged or lose their timestamp; a chunk with no C#-formatted line was also dropped from the exported log entirely. `stdout`/`stderr` are now line-buffered before the first app write, the governor writes complete timestamped lines, `LogCapture` keeps the incomplete tail of each pipe until the newline arrives, and only reassembled lines are written to the on-disk log. Every complete chunk is exported.
 - **Up-steps during memory pressure.** A step up is now blocked while `os_proc_available_memory()` is below 384 MB, with a throttled `step up blocked` line. This does not lower the peak footprint; it prevents the controller from making a bad situation worse.
+- **Idle emergency trims.** The Swift governor requested an emergency trim every 10 seconds while free memory stayed below 3/4 of the headroom. At the 96 MiB texture-cache floor the core's emergency path halved a cache already at 94–95 MiB and clamped the result back to 96 MiB, so the request could not shrink anything but still ran `GC.Collect(2)` and logged. The proactive path now skips the request while `texCache` is at the floor. A real iOS memory warning still reaches the core, whose emergency floor is now 48 MiB (half the normal floor), so an actual warning can still free the cache.
+
+### Added
+
+- **Liquid Glass app icon.** `Meliora.icon` (Icon Composer) is now the primary icon; `ASSETCATALOG_COMPILER_APPICON_NAME` is `Meliora` in Archive, Debug and Release. The existing alternate icons in `Assets.xcassets` remain available, and the icon picker groups the new default under Meliora instead of the previous author.
+
+### Field result (build 25, 2026-11-19)
+
+Super Mario Odyssey, reference iPhone 17 (iOS 27.2.1, 8 GB), `DedicatedMemory`:
+
+| Metric | Value |
+| --- | --- |
+| Length | 10:06 (23:12:36–23:22:42) |
+| Peak footprint | 5779 MB |
+| Minimum available | 358 MB |
+| Texture cache | 192 MiB peak, then 95 MiB |
+| Emergency / low-memory trims | 18 / 16 |
+| iOS memory warnings | 2 |
+| `GPU processing thread is too slow` | 11 |
+| FPS median / mean | 56 / 54.6 |
+| Adaptive scale | 1.00x for the whole run |
+| Thermal | fair → serious at 1:22 |
+| Exit | clean (`TerminationRequested` → `ServiceNv Close`) |
+
+This passes the applicable Test B criteria: the run is over 10 minutes, the controller made no false step down, the log has no merged or timestamp-less `[Meliora]` lines, and the session exited cleanly. It did **not** exercise snap-to-floor or the 384 MB up-step guard because the scale never left 1.00x.
+
+### Field result (final build 29, 2026-11-20)
+
+Three short sessions on the same device (SMO 1.3.0, `DedicatedMemory`), covering the new-icon build:
+
+| Session | 30 FPS target | 60 FPS @ 2.00x | 60 FPS @ 1.00x |
+| --- | --- | --- | --- |
+| Length | ~1:55 | ~0:45 (crashed) | ~3:05 |
+| FPS held | 29–30 | 50–54 | 47–62 |
+| Adaptive scale | 1.00x throughout | 2.00x throughout (p95 25–50 ms, gpuBusy 74–75%) | 1.00x throughout |
+| `budget=` line | 35.0ms (first field log at 30 FPS) | 17.5ms | 17.5ms |
+| iOS memory warnings | 2 | 7 | 2 |
+| Worst `minAvail` | 517 MB | 260 MB | 463 MB |
+| Trims | 0 proactive | 0 (warnings only) | 1 (texCache 102 MiB) |
+| Thermal | nominal → fair | fair | fair → serious |
+| Exit | clean | crashed | clean |
+
+- **Test C validated.** The 30 FPS path ran for the first time in the field: `adaptive: start 1.00x, floor 0.90x, target 30 fps`, `budget=35.0ms`, 29–30 FPS held, and no false step down despite p95 spikes to 70.7 ms.
+- **Idle-trim fix confirmed.** In the 1.00x/60 FPS run the texture cache sat at 92–96 MiB for two minutes while `minAvail` stayed at 470–590 MB, below the ~575 MB proactive threshold. Old builds requested an emergency trim every 10 seconds here; the fixed build requested nothing. The one trim that fired had `texCache 102 MiB` above the floor and trimmed it.
+- **Emergency trim floor observed.** After iOS memory warnings during level loads the cache dropped below the 96 MiB floor and the governor stopped there: 78–79 MiB in the 30 FPS run (47 MiB during the load itself), 76 MiB in the 1.00x/60 FPS run, 94 MiB in the 2.00x run.
+- **The controller also held 1.00x against sustained slow frames** (`p95` 21–48 ms vs the 17.5 ms budget) by detecting `slow frames but GPU idle (gpuBusy=34%), not touching scale (CPU-bound?)` — the median+gpuBusy gate behaving as designed.
+- **2.00x is not viable on 8 GB.** The 2.00x session crashed after ~45 s with seven iOS memory warnings and `minAvail` at 260 MB, no clean exit line. The log ends before the controller could step down, so the new floor-crossing branches (snap-to-floor, three-decimal step logs, 384 MB up-step guard) remain exercised only by code review.
+- The Liquid Glass icon renders as the app icon (the IPA primary icon is `Meliora`, verified in the build-29 Info.plist).
+
+### UnifiedMemory test (closed)
+
+A separate 0.0.5 build with `MELIORA_UNIFIED_MEMORY=1` ran for 14:27 on the same device. It peaked at 5725 MB against 5779 MB on the 0.0.6 reference (a 54 MB difference, within noise); the 0.0.5 `[Meliora] mem` lines report 405 MB minimum available, but the last `LogShrink` measured 323 MiB because the tail of the 0.0.5 log was still in the unsent 4 KB buffer. It also logged 61 emergency and 52 low-memory trims (against 18 and 16), 27 `GPU processing thread is too slow` warnings (against 11), and a median `gpuBusy` of 46% against 30% in the equal 9.5-minute window. The device was hotter and the run longer, so FPS and trim counts are not a clean pair; the footprint result is enough to reject the experiment. No paired 0.0.5 control was run because the old route is no longer reproducible. The branch is not merged and the override stays off.
 
 ### Still open
 
-- The 10–15 minute Test B and a sustained 30 FPS run.
-- The memory peak at large scene transitions; the texture cache is not the cause.
-- The `MELIORA_UNIFIED_MEMORY=1` experiment. Results will be reported separately and are not part of a release.
+- Snap-to-floor, the three-decimal step log and the 384 MB up-step guard have not fired in any field log, because no session stepped down. Verified in code review only.
+- The memory peak at large scene transitions; the texture cache is not the cause. Render scales above 1.00x make it worse fast: 2.00x crashed from memory pressure in under a minute on the reference device.
+- The `MELIORA_UNIFIED_MEMORY=1` experiment is closed: the 14:27 test run showed no footprint benefit and higher GPU-thread load, so the branch is not merged and the override stays off.
 
 ## 0.0.5 (Adaptive Engine rebalance)
 
@@ -47,7 +99,7 @@ Known issues found: the `0.90x -> 0.90x` duplicate is a real 0.9025 → 0.9000 r
 ### Notes
 
 - Thresholds are constants at the top of `AdaptivePerformance.cs`. The three 0.0.5 field runs left 0.90x and the +5% gate unchanged; a 10–15 minute run is still needed before treating them as settled.
-- A separate test build with `MELIORA_UNIFIED_MEMORY=1` is being prepared to measure how much of the footprint is host/device buffer duplication. It is not part of this release.
+- A separate test build with `MELIORA_UNIFIED_MEMORY=1` was prepared to measure how much of the footprint is host/device buffer duplication. It is not part of this release; the experiment is now closed (see Unreleased).
 
 ## 0.0.4 (Meliora Adaptive Engine)
 

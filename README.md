@@ -16,7 +16,7 @@
   <a href="https://github.com/Quancore21/Meliora/actions/workflows/ios.yml"><img src="https://img.shields.io/github/actions/workflow/status/Quancore21/Meliora/ios.yml?label=build" alt="Build status"></a>
 </p>
 
-**Current release: [0.0.5](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5)** — an Adaptive Engine rebalance built from the first 0.0.4 field log. Three 0.0.5 field sessions (4.5–6.1 minutes) confirmed the median gate, the 0.90x floor and climb-back; a 10–15 minute Test B is still pending, and memory pressure at large scene transitions remains a known issue. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) explain what is known and what is still open. The separate `MELIORA_UNIFIED_MEMORY=1` experiment is not enabled in release builds.
+**Current release: [0.0.5](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5)** — an Adaptive Engine rebalance built from the first 0.0.4 field log. Three 0.0.5 field sessions (4.5–6.1 minutes) confirmed the median gate, the 0.90x floor and climb-back; a 0.0.6 validation build has since passed a 10:06 Test B, and the final 0.0.6 build 29 passed an on-device smoke test (30 FPS target validated, idle-trim fix confirmed, Liquid Glass icon verified), but memory pressure at large scene transitions remains a known issue. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) explain what is known and what is still open. The separate `MELIORA_UNIFIED_MEMORY=1` experiment was tested and rejected; it is not enabled in release builds.
 
 > **Unofficial project.** Meliora is an independent fork. It is **not affiliated with** the MeloNX team, the MeloVertex author or the Ryujinx project. Please do not ask them for support with Meliora.
 
@@ -49,10 +49,10 @@ The name is Latin for "better". The goal is not a new emulator: it is to keep wh
 ## Project status
 
 - **0.0.5 is the current release.** It reworks the adaptive controller (median gate, x0.90 floor, working climb-back), fixes the texture-cache trim floor, and adds honest memory telemetry. See the [changelog](CHANGELOG.md).
-- **Device validation is in progress.** The 0.0.5 thresholds come from one 17-minute 0.0.4 session on an iPhone 17 (iOS 27.2) and were checked against three 0.0.5 sessions of 4.5–6.1 minutes. The controller behaved as designed and climbed back from 0.90x, but a 10–15 minute Test B is still pending. The release notes are updated as results arrive.
-- **Known 0.0.5 issues.** A step that lands on the floor can log `0.90x -> 0.90x` and recreate render targets for a 0.25% change; Swift `[Meliora]` lines in exported logs may be merged and lack timestamps; memory pressure at large scene transitions is still reproducible. The first two are fixed in the unreleased 0.0.6 tree.
+- **Device validation.** The 0.0.6 build 25 run lasted 10:06 on the reference iPhone 17 (iOS 27.2.1), peaked at 5779 MB with 358 MB minimum available, made no false step down and exited cleanly. The final build 29 (2026-11-20) was smoke-tested on device: the 30 FPS target path held 29–30 FPS with no false step down, the idle-trim fix produced zero repeated trims, and the Liquid Glass icon is the app icon. No run stepped down, so snap-to-floor and the 384 MB up-step guard remain unexercised in the field.
+- **Known 0.0.5 issues.** A step that lands on the floor can log `0.90x -> 0.90x` and recreate render targets for a 0.25% change; Swift `[Meliora]` lines in exported logs may be merged and lack timestamps; memory pressure at large scene transitions is still reproducible. The first two are fixed in the 0.0.6 validation build; the 0.0.6 build 25 log has zero merged or timestamp-less `[Meliora]` lines.
 - **Compatibility is inherited.** Meliora does not maintain its own game compatibility list and does not claim that a game that runs on MeloNX or Ryujinx runs here. The emulator core is unchanged in 0.0.5; only the performance plumbing around it changed.
-- **Unified Memory is an experiment.** `MELIORA_UNIFIED_MEMORY=1` opts into the unified-memory path on MoltenVK. It is not enabled in release builds; a separate test build is used to measure footprint and FPS before it is considered for a release.
+- **Unified Memory is closed as an experiment.** `MELIORA_UNIFIED_MEMORY=1` opts into the unified-memory path on MoltenVK. A 14:27 test run showed no footprint benefit (5725 MB peak against 5779 MB) and a busier GPU thread (median `gpuBusy` 46% against 30%), so the branch is not merged and release builds keep `DedicatedMemory`.
 
 ## Requirements
 
@@ -133,7 +133,7 @@ These exist for experiments and A/B testing. Most are not exposed in the UI; set
 | `MELIORA_QOS` | `1` | `0` disables Darwin QoS assignment. |
 | `MELIORA_SPIN_US` | unset | Pins the compositor spin tail in microseconds instead of the adaptive 0.2–2 ms. |
 | `MELIORA_SMOOTH` | `0` | Reserved live-pacing flag. Effectively a no-op in 0.0.5 because the app only applies settings at launch. |
-| `MELIORA_UNIFIED_MEMORY` | `0` | `1` opts into the unified-memory path on MoltenVK. Experimental; not used by release builds. |
+| `MELIORA_UNIFIED_MEMORY` | `0` | `1` opts into the unified-memory path on MoltenVK. Tested and rejected: no footprint benefit and a busier GPU thread. Not used by release builds. |
 | `MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS` | `0` | `1` mirrors the *MVK: Prefill Metal Command Buffers* setting. |
 | `MVK_CONFIG_SHADER_COMPRESSION_ALGORITHM` | `0` | `4` selects zlib for the pipeline cache; `0` disables compression. |
 | `MTL_HUD_ENABLED` | `0` | `1` shows the native Metal HUD with true GPU frame times. |
@@ -158,7 +158,7 @@ Meliora writes its diagnostics to the emulator log, which is available from the 
 
 `minAvail=` is the minimum over the 10-second window, not an instantaneous value. A single `os_proc_available_memory` sample can look much healthier than the trim check that ran a moment later; the window minimum is the honest number. `texCache=` is the total texture cache size reported by the core.
 
-In 0.0.5 and earlier, the Swift governor's `[Meliora]` lines have no timestamp and can be split or merged with C# lines in the exported log. Use the nearest C# timestamp and treat sub-minute timing as approximate; 0.0.6 adds timestamps and line-atomic writes.
+In 0.0.5 and earlier, the Swift governor's `[Meliora]` lines have no timestamp and can be split or merged with C# lines in the exported log. Use the nearest C# timestamp and treat sub-minute timing as approximate. The 0.0.6 build 25 log has zero merged or timestamp-less `[Meliora]` lines; the fix writes complete timestamped lines and reassembles pipe chunks.
 
 When reporting a problem, attach the `[Meliora]` lines from the run, the device model, the iOS version, the game and title ID, the IPA version, and the graphics settings you used. Without those, a performance report cannot be reproduced. The reporting template lives in [docs/TESTING.md](docs/TESTING.md).
 
@@ -167,7 +167,7 @@ When reporting a problem, attach the `[Meliora]` lines from the run, the device 
 - **Picture first.** 0.0.5 stops at x0.90, not x0.85. In the 0.0.4 field log, x0.85 was still GPU-bound in the heaviest scenes while visibly soft, so lowering further bought little. If you prefer a fixed image, turn *Adaptive Resolution* off.
 - **The controller only writes the render scale.** It allocates nothing, touches no profile and does not change any other graphics setting. The starting scale is always the ceiling.
 - **Single-frame hitches remain.** Shader compiles, pipeline creation and allocations cause 0–5 FPS spikes that lowering resolution cannot fix. The controller deliberately does not react to them.
-- **Long sessions can still hit memory pressure.** In the 0.0.5 transition run the footprint peaked at 6.03 GB with 113 MB available, while the texture cache was only 84–88 MiB and 14 emergency trims mostly could not free more. The 96 MiB floor is not the cause; buffers, the managed heap and driver allocations dominate. The `minAvail=` / `texCache=` telemetry shows where the pressure is.
+- **Long sessions can still hit memory pressure.** In the 0.0.5 transition run the footprint peaked at 6.03 GB with 113 MB available, while the texture cache was only 84–88 MiB and 14 emergency trims mostly could not free more. The 0.0.6 build 25 run peaked at 5779 MB with 358 MB minimum available and 18 emergency trims; the cache sat at 95 MiB. The 96 MiB floor is not the cause; buffers, the managed heap and driver allocations dominate. A build 29 session at 2.00x scale crashed from memory pressure in ~45 s (`minAvail` 260 MB, seven warnings), so render scales above 1.00x are not viable on 8 GB. The `minAvail=` / `texCache=` telemetry shows where the pressure is.
 - **Thermal state matters.** A cold-phone run is not comparable to a warmed-up one. The 0.0.3 and 0.0.4 baselines started at `thermal=serious`; the 0.0.5 #1 run started at `thermal=fair` and reached `serious` during the transition. Record the thermal state when comparing releases.
 - **Do not compare different routes or settings.** Use the same game, the same scene, the same graphics settings and a similar thermal state. [docs/TESTING.md](docs/TESTING.md) describes the routine used for the release baselines.
 

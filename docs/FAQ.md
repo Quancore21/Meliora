@@ -116,7 +116,7 @@ A two-part mechanism: the Swift app reports how much memory iOS still allows, an
 
 ### What is Unified Memory?
 
-An experiment (`MELIORA_UNIFIED_MEMORY=1`) that opts into the unified-memory path on MoltenVK. It is **not** enabled in release builds and is not part of 0.0.5. It is being measured separately; see [PERFORMANCE.md](PERFORMANCE.md#unified-memory-meliora_unified_memory1).
+An experiment (`MELIORA_UNIFIED_MEMORY=1`) that opts into the unified-memory path on MoltenVK. It was tested and rejected: it did not reduce the peak footprint and kept the GPU thread busier. It is **not** enabled in release builds; see [PERFORMANCE.md](PERFORMANCE.md#unified-memory-meliora_unified_memory1).
 
 ### Does Target 30 FPS make a 60 FPS game smoother?
 

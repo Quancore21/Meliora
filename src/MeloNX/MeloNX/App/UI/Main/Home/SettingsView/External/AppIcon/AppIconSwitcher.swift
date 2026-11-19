@@ -141,13 +141,15 @@ struct AppIconSwitcherView: View {
     private func setupColumns() {
         if #available(iOS 19, *) {
             appIcons = [
-                AppIcon(iconNames: ["Default": UIImage.appIcon(), "Round": "RoundAppIcon"], creator: "CycloKid (Liquid Glass by Transistor)"),
+                AppIcon(iconNames: ["Default": UIImage.appIcon()], creator: "Meliora"),
+                AppIcon(iconNames: ["Round": "RoundAppIcon"], creator: "CycloKid (Liquid Glass by Transistor)"),
                 AppIcon(iconNames: ["Pixel Default": "PixelAppIcon", "Pixel Round": "PixelRoundAppIcon"], creator: "Nobody (Liquid Glass by Transistor)"),
                 AppIcon(iconNames: ["\"UwU\"": "uwuAppIcon"], creator: "𝒰𝓃𝓀𝓃𝑜𝓌𝓃 (Liquid Glass by Transistor)"),
             ]
         } else {
             appIcons = [
-                AppIcon(iconNames: ["Default": UIImage.appIcon(), "Dark Mode": "DarkMode", "Round": "RoundAppIcon"], creator: "CycloKid"),
+                AppIcon(iconNames: ["Default": UIImage.appIcon()], creator: "Meliora"),
+                AppIcon(iconNames: ["Dark Mode": "DarkMode", "Round": "RoundAppIcon"], creator: "CycloKid"),
                 AppIcon(iconNames: ["Pixel Default": "PixelAppIcon", "Pixel Round": "PixelRoundAppIcon"], creator: "Nobody"),
                 AppIcon(iconNames: ["\"UwU\"": "uwuAppIcon"], creator: "𝒰𝓃𝓀𝓃𝑜𝓌𝓃"),
             ]
@@ -247,6 +249,6 @@ extension UIImage {
            let lastIcon = iconFiles.last {
             return lastIcon
         }
-        return "AppIcon"
+        return "Meliora"
     }
 }

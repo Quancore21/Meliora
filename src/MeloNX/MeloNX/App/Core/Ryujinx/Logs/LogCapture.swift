@@ -31,6 +31,12 @@ final class LogCapture: ObservableObject {
     private var continuation: AsyncStream<String>.Continuation?
     private var storedLogs: [String] = []
 
+    // A pipe read can end in the middle of a line. Keep the incomplete tail here
+    // until the next chunk arrives; splitting every chunk independently used to
+    // merge the tail with the next line and corrupt the exported log.
+    private var stdoutRemainder = Data()
+    private var stderrRemainder = Data()
+
     public var capturedLogs: [String] {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -90,6 +96,8 @@ final class LogCapture: ObservableObject {
 
         guard outPipe != nil || errPipe != nil else { return }
 
+        flushRemainders()
+
         dup2(originalStdout, STDOUT_FILENO)
         dup2(originalStderr, STDERR_FILENO)
 
@@ -108,21 +116,94 @@ final class LogCapture: ObservableObject {
             let data = fileHandle.availableData
             let originalFD = isStdout ? self.originalStdout : self.originalStderr
 
-            if !data.isEmpty {
-                write(originalFD, (data as NSData).bytes, data.count)
+            // Extract first, then tee: originalStdout/originalStderr point at the
+            // on-disk log, so writing the raw chunk there would preserve the very
+            // split/merged lines this buffer is meant to remove.
+            let complete = self.extractCompleteLines(data, isStdout: isStdout)
+
+            if !complete.isEmpty {
+                write(originalFD, (complete as NSData).bytes, complete.count)
             }
 
-            guard let logString = String(data: data, encoding: .utf8),
-                  let cleanedLog = self.cleanLog(logString),
-                  !cleanedLog.0.isEmpty else { return }
+            guard !complete.isEmpty,
+                  let logString = String(data: complete, encoding: .utf8) else { return }
 
-            self.appendLog(cleanedLog.1)
+            let cleanedLog = self.cleanLog(logString)
+
+            // The exported log keeps every complete line; the live stream is filtered
+            // only for display. The old code dropped a whole chunk when its filtered
+            // form was empty, which could hide `[Meliora]` lines that shared a chunk
+            // with no matching C# line.
+            if !cleanedLog.all.isEmpty {
+                self.appendLog(cleanedLog.all)
+            }
+
+            guard !cleanedLog.filtered.isEmpty else { return }
 
             self.stateLock.lock()
             let continuation = self.continuation
             self.stateLock.unlock()
 
-            continuation?.yield(cleanedLog.0)
+            continuation?.yield(cleanedLog.filtered)
+        }
+    }
+
+    private func extractCompleteLines(_ data: Data, isStdout: Bool) -> Data {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        var buffer = isStdout ? stdoutRemainder : stderrRemainder
+        buffer.append(data)
+
+        guard let newline = buffer.lastIndex(of: 0x0A) else {
+            if isStdout {
+                stdoutRemainder = buffer
+            } else {
+                stderrRemainder = buffer
+            }
+
+            return Data()
+        }
+
+        let complete = buffer[...newline]
+        let remainder = buffer[buffer.index(after: newline)...]
+
+        if isStdout {
+            stdoutRemainder = Data(remainder)
+        } else {
+            stderrRemainder = Data(remainder)
+        }
+
+        return Data(complete)
+    }
+
+    private func flushRemainders() {
+        stateLock.lock()
+        let outRemainder = stdoutRemainder
+        let errRemainder = stderrRemainder
+        stdoutRemainder = Data()
+        stderrRemainder = Data()
+        stateLock.unlock()
+
+        for (data, fd) in [(outRemainder, originalStdout), (errRemainder, originalStderr)] where !data.isEmpty {
+            // Preserve an unterminated tail at shutdown, but only after it has been
+            // written as a unit: the file log must not receive a half line either.
+            write(fd, (data as NSData).bytes, data.count)
+
+            guard let text = String(data: data, encoding: .utf8) else { continue }
+
+            let cleanedLog = cleanLog(text)
+
+            if !cleanedLog.all.isEmpty {
+                appendLog(cleanedLog.all)
+            }
+
+            if !cleanedLog.filtered.isEmpty {
+                stateLock.lock()
+                let continuation = self.continuation
+                stateLock.unlock()
+                continuation?.yield(cleanedLog.filtered)
+            }
         }
     }
 
@@ -137,7 +218,7 @@ final class LogCapture: ObservableObject {
         }
     }
 
-    private func cleanLog(_ raw: String) -> (String, String)? {
+    private func cleanLog(_ raw: String) -> (filtered: String, all: String) {
         let showFullLogs = UserDefaults.standard.bool(forKey: "showFullLogs")
         let lines = raw.split(separator: "\n")
 
@@ -156,22 +237,17 @@ final class LogCapture: ObservableObject {
             return !matches.isEmpty
         }
 
-        let cleaned = filteredLines.map { line -> String in
+        let clean: (Substring) -> String = { line in
             if let tabRange = line.range(of: "\t") {
                 return line[tabRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return line.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.joined(separator: "\n")
+        }
 
+        let cleaned = filteredLines.map(clean).joined(separator: "\n")
+        let cleanedAll = lines.map(clean).joined(separator: "\n")
 
-        let cleaned2 = lines.map { line -> String in
-            if let tabRange = line.range(of: "\t") {
-                return line[tabRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            return line.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.joined(separator: "\n")
-
-        return cleaned.isEmpty ? nil : (cleaned.replacingOccurrences(of: "\n\n", with: "\n"), cleaned2)
+        return (cleaned.replacingOccurrences(of: "\n\n", with: "\n"), cleanedAll)
     }
 
     deinit {

@@ -124,7 +124,7 @@ Practical steps:
 - Lower the render resolution or disable expensive settings if the session is long.
 - If the app is killed, attach the last mem lines and the session length. A kill at the ~6 GB limit with a small `texCache=` means the pressure is outside the texture cache; that is exactly the case the telemetry is meant to expose.
 
-Unified Memory (`MELIORA_UNIFIED_MEMORY=1`) is an experiment, not a release setting. Do not enable it for routine play.
+Unified Memory (`MELIORA_UNIFIED_MEMORY=1`) was tested and rejected: it did not reduce the peak footprint and kept the GPU thread busier. It is not a release setting; do not enable it for routine play.
 
 ## Audio
 

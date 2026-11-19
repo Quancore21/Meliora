@@ -2,7 +2,7 @@
 
 This document explains the Meliora Adaptive Engine, the memory governor and the evidence behind their current values. It is written for people who want to understand a log, tune an experiment or challenge a release claim. Every number here comes from a game log or from a constant in the code; when the code and this document disagree, the code is right and the document is a bug.
 
-The current values are the 0.0.5 values. They were calibrated from the first long 0.0.4 field log and checked against three 0.0.5 field sessions (4.5–6.1 minutes each); the 10–15 minute Test B is still pending. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) and [CHANGELOG](../CHANGELOG.md) say what is known and what is still open.
+The current values are the 0.0.6 values. They were calibrated from the first long 0.0.4 field log, checked against three 0.0.5 field sessions (4.5–6.1 minutes each), and a 0.0.6 build 25 run passed the 10-minute Test B (10:06). The final build 29 (2026-11-20) then passed a short smoke test: Test C validated at 30 FPS, the idle-trim fix confirmed in the field, the Liquid Glass icon verified in the IPA. No run stepped down, so snap-to-floor and the 384 MB up-step guard remain unexercised in the field. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) and [CHANGELOG](../CHANGELOG.md) say what is known and what is still open.
 
 ## Design principles
 
@@ -168,24 +168,48 @@ What the logs confirmed:
 - **The duplicate step is a real resize.** Run #1 logged `0.90x -> 0.90x`; the actual values were 0.9025 → 0.9000, and the exact `!=` comparison in `TextureManager` recreated the host textures and views for a 0.25% linear change. Fixed in 0.0.6 by snapping to the floor and logging three decimals.
 - **Memory pressure is not a texture-cache problem.** At the 6.03 GB peak the cache was 84–88 MiB; the last shrink freed 8 MiB at 146 MB available. Fourteen emergency trims and nine proactive trims mostly could not return memory because the pressure is in buffers, the managed heap and driver allocations, not in the texture cache.
 - **Run #1 ended without a termination marker.** `TerminationRequested` and `ServiceNv Close` are absent; the tester reports a manual close. The log does not prove a jetsam kill, so the documentation does not claim one.
-- **The 30 FPS toggle was checked, not validated.** A 38-second smoke run selected target 30, budget 35.0 ms, median 33.3 ms, `gpuBusy` 6%, scale 1.00x. That proves the target wiring; a sustained 30 FPS run is still pending.
+- **The 30 FPS toggle was checked, not validated.** A 38-second smoke run selected target 30, budget 35.0 ms, median 33.3 ms, `gpuBusy` 6%, scale 1.00x. The build 29 run (2026-11-20, ~1:55) then validated it: `budget=35.0ms`, 29–30 FPS held, no false step down.
 - **The exported log is not reliable enough for fine timing.** Swift-emitted `[Meliora] mem` and low-memory lines have no timestamp and can be merged with C# lines (for example `Gamepad2026-11-17 ...`). The 0.0.6 logging fix adds timestamps, line-atomic writes and a per-pipe remainder buffer.
 
-### 0.0.6 (unreleased)
+### 0.0.6 (build 25 Test B; build 29 smoke test)
 
-The current source tree contains three fixes that are not in the 0.0.5 release build:
+Build 25 contains the controller and logging changes that are not in the 0.0.5 release build:
 
 - **Snap-to-floor.** A down-step that would land within 0.01 of the floor lands on the floor directly; the step line prints three decimals. This removes the 0.9025 intermediate value and the duplicate host-texture resize.
-- **Line-atomic `[Meliora]` logs.** The Swift governor emits `yyyy-MM-dd HH:mm:ss.SSS [Meliora] ...` lines through a single write, `stdout` is line-buffered, and `LogCapture` keeps the incomplete tail of each pipe until the newline arrives.
-- **Memory-aware up-step.** A step up is blocked while `os_proc_available_memory()` is below 384 MB (or unknown), and the block is logged. This is a guard against climbing into pressure, not a memory saving.
+- **Line-atomic `[Meliora]` logs.** The Swift governor emits `yyyy-MM-dd HH:mm:ss.SSS [Meliora] ...` lines through a single write, `stdout`/`stderr` are line-buffered before the first app write, `LogCapture` keeps the incomplete tail of each pipe until the newline arrives, and the on-disk log receives only reassembled lines.
+- **Memory-aware up-step.** A step up is blocked while `os_proc_available_memory()` is below 384 MB, and the block is logged; an unknown value (governor disabled or no sample yet) does not block. This is a guard against climbing into pressure, not a memory saving.
 
-They are listed as unreleased in the [changelog](../CHANGELOG.md) and must be validated by a device run before any release claim.
+The final build also contains the idle-trim cleanup and the Liquid Glass icon; neither is in build 25.
+
+Field result (2026-11-19, 10:06, Super Mario Odyssey, reference iPhone 17, iOS 27.2.1, 8 GB, `DedicatedMemory`):
+
+| Metric | Value |
+| --- | --- |
+| Peak footprint | 5779 MB |
+| Minimum available | 358 MB |
+| Texture cache | 192 MiB peak, then 95 MiB |
+| Emergency / low-memory trims | 18 / 16 |
+| iOS memory warnings | 2 |
+| `GPU processing thread is too slow` | 11 |
+| FPS median / mean | 56 / 54.6 |
+| Adaptive scale | 1.00x for the whole run |
+| Thermal | fair → serious at 1:22 |
+| Exit | clean (`TerminationRequested` → `ServiceNv Close`) |
+
+The log contains **zero** merged or timestamp-less `[Meliora]` lines, so the logging fix is field-validated. The run is long enough for Test B and the controller made no false step down, but it never stepped down or up, so snap-to-floor and the 384 MB guard were not exercised. The idle-trim cleanup is a later code change; build 29 then confirmed it in the field (see below).
+
+Build 29 (2026-11-20, same device, three short sessions) covered what build 25 could not:
+
+- **30 FPS target (Test C), ~1:55.** `start 1.00x, floor 0.90x, target 30 fps`, `budget=35.0ms`, 29–30 FPS held, no false step down despite p95 spikes to 70.7 ms. Clean exit.
+- **60 FPS @ 1.00x, ~3:05.** Sustained slow frames (p95 21–48 ms vs the 17.5 ms budget) did not trigger a step down: the controller logged `slow frames but GPU idle (gpuBusy=34%), not touching scale (CPU-bound?)`. The idle-trim fix held: two minutes with the cache at 92–96 MiB and `minAvail` 470–590 MB (below the ~575 MB threshold) produced zero repeated trims; the single trim that fired had `texCache 102 MiB`.
+- **Emergency trim floor (floor / 2) observed.** After iOS memory warnings during level loads the cache dropped below the 96 MiB floor and stayed there — 76–79 MiB in the 30 FPS and 1.00x runs, 94 MiB at 2.00x — instead of being re-grown immediately. The 30 FPS run also logged the 30 FPS numbers precisely: median 33.3 ms, p95 36.2–37.1 ms (one 70.7 ms spike during the load), gpuBusy 11–13% after the load.
+- **60 FPS @ 2.00x, ~0:45, crashed.** Seven iOS memory warnings, `minAvail` 260 MB, no clean exit. Scales above 1.00x are not viable on 8 GB; the run ended before the controller could step down.
 
 Open:
 
-- The 10–15 minute Test B and a sustained 30 FPS run are still pending.
-- The memory peak remains a field risk. The 0.0.6 memory-aware up-step guard avoids climbing into low memory, but it does not lower the peak.
-- Unified Memory remains an experiment and is not part of the release build. The original kingdom-transition route is no longer reproducible; the paired test will use the current save.
+- Snap-to-floor, the three-decimal step log and the 384 MB up-step guard have not fired in any field log, because no session stepped down; they are verified by code review only.
+- The memory peak remains a field risk. The memory-aware up-step guard and the idle-trim cleanup avoid bad behaviour, but they do not lower the peak.
+- The `MELIORA_UNIFIED_MEMORY=1` experiment is closed (see [Unified Memory](#unified-memory-meliora_unified_memory1)); the branch is not merged and the override stays off.
 - The thresholds still come from a small sample; do not generalize them to other games or devices without a log.
 
 ## Memory governor
@@ -195,8 +219,8 @@ Open:
 - Tick: 0.5 s on a utility queue.
 - Headroom: `clamp(10% of physical memory, 512 MiB, 1 GiB)`. On an 8 GB iPhone this is 768 MiB.
 - While the governor is enabled, every positive tick reports `os_proc_available_memory()` to the core.
-- Proactive trim: when available `< headroom × 3/4` (~575 MB on 8 GB) and the last trim was more than 10 s ago. The 0.0.4 threshold was `headroom / 2` (~383 MB), which the field log reached only after the process was already in its death spiral.
-- iOS memory warning: immediate trim.
+- Proactive trim: when available `< headroom × 3/4` (~575 MB on 8 GB) and the last trim was more than 10 s ago, **and** the texture cache is above its 96 MiB normal floor. At the floor the trim cannot shrink anything, so the request is skipped instead of running a no-op GC every 10 seconds. The 0.0.4 threshold was `headroom / 2` (~383 MB), which the field log reached only after the process was already in its death spiral.
+- iOS memory warning: immediate trim. This path is not gated by the cache size; a real warning may use the core's lower emergency floor.
 - Logging window: 10 s. `minAvail` is the minimum over the window; `texCache` is read from the core.
 - Pipeline cache: save request every 10 minutes and on entering the background.
 
@@ -213,7 +237,7 @@ limit = clamp(currentSize - deficit, floor, unconstrainedMax)
 
 `sizeAtSample` is captured on the first cache check after a memory report, so textures added or evicted since the sample are accounted for. A negative deficit means there is enough headroom and the cache may use its unconstrained budget.
 
-`RequestEmergencyTrim` sets a flag and schedules a non-blocking optimized GC. On the next cache check, the limit becomes `min(unconstrainedMax, max(currentSize / 2, floor))`. The GC is deliberately not a blocking compacting collection: freezing emulation for hundreds of milliseconds would be worse than the memory it frees.
+`RequestEmergencyTrim` sets a flag and schedules a non-blocking optimized GC. On the next cache check, the limit becomes `min(unconstrainedMax, max(currentSize / 2, floor / 2))`: an emergency may shrink the cache below its normal floor, down to half of it (48 MiB when the normal floor is 96 MiB). The GC is deliberately not a blocking compacting collection: freezing emulation for hundreds of milliseconds would be worse than the memory it frees.
 
 ### Texture-cache limits
 
@@ -224,11 +248,13 @@ limit = clamp(currentSize - deficit, floor, unconstrainedMax)
 - `MinTextureSizeCapacity`: 512 MiB.
 - Unconstrained budget: 50% of the GPU's reported maximum, clamped to 512 MiB–4 GiB.
 - Process budget on devices with 8 GiB or less of .NET-visible memory: 30% of that memory, clamped to 512 MiB–2 GiB.
-- `MinGovernedTextureSizeCapacity`: 96 MiB (was 192 MiB in 0.0.4).
+- `MinGovernedTextureSizeCapacity`: 96 MiB normal floor (was 192 MiB in 0.0.4); an emergency trim may target 48 MiB.
 
 The 192 MiB floor made emergency trims a no-op in the field log: the cache sat at 47–206 MiB, and `GetTextureCacheLimit` could not return a value below 192 MiB. The log showed `texture cache 130 MiB -> 130 MiB` while the process was already under severe memory pressure. SMO runs with the cache as low as ~47 MiB, so 96 MiB keeps a safety margin without blocking the trim.
 
 The 0.0.5 logs confirm the direction: at the 6.03 GB peak the cache was 84–88 MiB, so the 96 MiB floor was not the limiter. Lowering it further would not address the footprint.
+
+The 0.0.6 build 25 log shows the remaining defect: 18 emergency and 16 low-memory trims fired while the cache sat at 95 MiB, and the old emergency formula clamped every target back to 96 MiB. The cleanup skips the proactive request at the floor and lets a real memory warning target 48 MiB.
 
 ### What the governor cannot do
 
@@ -274,7 +300,7 @@ How to read them:
 - `footprint` is `phys_footprint` from `task_vm_info`.
 - `minAvail` is the worst `os_proc_available_memory()` in the 10-second window.
 - `texCache` is the texture cache's total size in MiB. If it sits at 96 MiB while `minAvail` is low, the pressure is outside the texture cache.
-- In 0.0.5 and earlier, the Swift governor's `[Meliora] mem` and low-memory lines have no timestamp and can be split or merged with C# output. Use the nearest C# `MeloNX[...]` timestamp and treat sub-minute timing as approximate. 0.0.6 adds timestamps and line-atomic writes.
+- In 0.0.5 and earlier, the Swift governor's `[Meliora] mem` and low-memory lines have no timestamp and can be split or merged with C# output. Use the nearest C# `MeloNX[...]` timestamp and treat sub-minute timing as approximate. The 0.0.6 build 25 log has zero merged or timestamp-less `[Meliora]` lines; 0.0.6 writes complete timestamped lines and reassembles pipe chunks.
 - `fps` is the instantaneous value at the log tick; `avgFps` and `minFps` cover the window.
 - `thermal` is the iOS thermal state; compare runs at a similar state.
 
@@ -301,18 +327,24 @@ The full routine and acceptance criteria are in [TESTING.md](TESTING.md).
 
 ### Unified Memory (`MELIORA_UNIFIED_MEMORY=1`)
 
-This is a separate experiment, not a release feature. It switches the Vulkan memory type to `UnifiedMemory` on MoltenVK, which makes `BufferBackingState` treat buffers as host memory and skip the device-local swap path. The goal is to measure whether host/device duplication is part of the footprint.
+**Closed.** This was a separate experiment, not a release feature. It switches the Vulkan memory type to `UnifiedMemory` on MoltenVK, which makes `BufferBackingState` treat buffers as host memory and skip the device-local swap path. The goal was to measure whether host/device duplication is part of the footprint.
 
-The original 2661781375 → 512560049 save is no longer reproducible: the save has progressed past that transition. The paired experiment will therefore use the current save and the same route for both builds, including a kingdom transition if one is available. Run a 10–15 minute 0.0.5 control and a 10–15 minute UnifiedMemory run from that save, cooling the device between them.
+The original 2661781375 → 512560049 save is no longer reproducible: the save has progressed past that transition. A paired 0.0.5 control was therefore not run. Instead, the 0.0.5 UnifiedMemory build was compared with the 0.0.6 build 25 `DedicatedMemory` reference on the same device. The runs differ in length (14:27 vs 10:06) and thermal state (the UnifiedMemory run was hotter), so FPS and trim counts are not a clean pair; the footprint result is still usable.
 
-Success criteria, agreed before the experiment:
+| Metric | UnifiedMemory (0.0.5) | DedicatedMemory (0.0.6) |
+| --- | --- | --- |
+| Effective memory type | `UnifiedMemory` | `DedicatedMemory` |
+| Peak footprint | 5725 MB | 5779 MB |
+| `minAvail` from mem lines | 405 MB | 358 MB |
+| Last `LogShrink` available | 323 MiB | — |
+| Emergency / low-memory trims | 61 / 52 | 18 / 16 |
+| `GPU processing thread is too slow` | 27 | 11 |
+| Median `gpuBusy` (first 9.5 min) | 46% (peak 96%) | 30% (peak 61%) |
+| FPS median / mean | 55 / 52.6 | 56 / 54.6 |
+| Adaptive steps | 1.00 → 0.95 → 1.00 | none |
+| Exit | clean | clean |
 
-- Peak `footprint` below the paired 0.0.5 control; the original absolute target was 5.0–5.2 GB, but the 0.0.5 #1 reference peaked at 6.03 GB, so report both the delta and the absolute peak.
-- No FPS regression in heavy-geometry scenes.
-- `memoryType=UnifiedMemory` visible in the `[Meliora] gpu:` line.
-- No worse stability: the session should exit normally, as 0.0.5 #2/#3 did.
-
-If any of those fails, the experiment is rejected and the default path stays.
+The 323 MiB figure is the last `LogShrink` in the 0.0.5 UnifiedMemory log; the final `[Meliora] mem` lines were lost because the 0.0.5 process still had them in its 4 KB stdout buffer. The UnifiedMemory run does not show a footprint win (the 54 MB peak difference is within run-to-run noise), and it keeps the GPU thread busier: disabling buffer migration puts every buffer in host memory and adds work through MoltenVK. The experiment is rejected, the test branch is not merged, and `MELIORA_UNIFIED_MEMORY` stays off.
 
 ### `MELIORA_FLOOR`
 
@@ -330,8 +362,8 @@ For games that natively target 30 FPS, enable *Target 30 FPS* and restart the ga
 
 ## Limitations
 
-- **One device, one game, three short sessions.** The 0.0.5 calibration comes from SMO on an iPhone 17. The three field runs are 4.5–6.1 minutes; Test B (10–15 minutes) is still pending. Other titles, devices and thermal states may need different values.
-- **The memory peak is still open.** The 0.0.6 up-step guard is a mitigation; the footprint is dominated by buffers, the managed heap and driver allocations, not the texture cache.
+- **One device, one game.** The calibration comes from SMO on an iPhone 17: three 0.0.5 sessions of 4.5–6.1 minutes, one 0.0.6 build 25 session of 10:06 and three build 29 smoke sessions (2026-11-20), including a validated 30 FPS run. Other titles, devices and thermal states may need different values.
+- **The memory peak is still open.** The 0.0.6 up-step guard and idle-trim cleanup are mitigations; the footprint is dominated by buffers, the managed heap and driver allocations, not the texture cache.
 - **Busy fraction is a proxy.** It measures the GPU thread around `ProcessFrame`, not Metal utilization. A game can be GPU-bound in a way this proxy underestimates.
 - **The controller cannot fix hitches.** Shader compiles, pipeline creation and allocation stalls are not resolution problems.
 - **The controller cannot fix CPU-bound scenes.** Lowering resolution does not help the guest CPU or the game's own pacing.

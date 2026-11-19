@@ -80,7 +80,7 @@ The render loop is in `WindowBase.RunLoop`. It runs on the core's render thread 
 
 The GPU emulation targets Vulkan. On iOS, MoltenVK translates Vulkan to Metal. `MVKInitialization` applies the Meliora-controlled MoltenVK options (prefill command buffers, resume-lost-device) and reads the effective configuration back for the `[Meliora] gpu:` log line.
 
-The memory type is normally `DedicatedMemory` on MoltenVK because the shared-memory probe does not report unified memory. `MELIORA_UNIFIED_MEMORY=1` overrides that decision for experiments; the choice is visible in the `memoryType=` field of the GPU log line.
+The memory type is normally `DedicatedMemory` on MoltenVK because the shared-memory probe does not report unified memory. `MELIORA_UNIFIED_MEMORY=1` overrides that decision for experiments; the choice is visible in the `memoryType=` field of the GPU log line. The override was tested and rejected: it did not reduce the peak footprint and kept the GPU thread busier. Release builds keep `DedicatedMemory`.
 
 ## Startup and game launch
 
@@ -135,8 +135,8 @@ The memory path has two sides.
 - A 0.5-second timer on a utility queue samples `os_proc_available_memory()`.
 - The headroom is 10% of physical memory, clamped to 512 MiB–1 GiB. It is sent to the core with `meliora_memory_configure`.
 - While the governor is enabled, every positive sample is forwarded with `meliora_memory_report`.
-- A proactive trim fires when available memory drops below 3/4 of the headroom (~575 MB on an 8 GB iPhone), with a 10-second cooldown. The 0.0.4 field log showed the process sitting below 900 MB free for a minute before the kill, so the threshold moved earlier.
-- An iOS memory warning triggers an immediate trim.
+- A proactive trim fires when available memory drops below 3/4 of the headroom (~575 MB on an 8 GB iPhone), with a 10-second cooldown, and only while the texture cache is above its 96 MiB normal floor. At the floor the request is skipped because it cannot shrink the cache. The 0.0.4 field log showed the process sitting below 900 MB free for a minute before the kill, so the threshold moved earlier.
+- An iOS memory warning triggers an immediate trim without the cache-size gate.
 - Every 10 seconds the app logs footprint, the worst availability over the window, texture-cache size, thermal state, low-power mode and FPS.
 - Every 10 minutes, and when the app enters the background, the app asks the core to save the pipeline cache.
 
@@ -144,8 +144,8 @@ The memory path has two sides.
 
 - `MemoryGovernor.Configure` enables the governor and clamps the headroom to 256 MiB–2 GiB.
 - `GetTextureCacheLimit` computes the deficit `headroom - available + (currentCacheSize - sizeAtSample)` and returns a limit that gives the deficit back, clamped by the cache's own floor and ceiling.
-- `RequestEmergencyTrim` marks a trim request and schedules a non-blocking optimized GC. The next cache check halves the cache, but never below the floor.
-- `AutoDeleteCache` sets the unconstrained budget from the GPU's reported memory (50%, clamped 512 MiB–4 GiB), applies a 30% process budget on devices with 8 GiB or less of .NET-visible memory, and uses an emergency floor of at most 96 MiB. The 96 MiB value replaced 192 MiB in 0.0.5 because trims below 192 MiB were guaranteed no-ops in the field log.
+- `RequestEmergencyTrim` marks a trim request and schedules a non-blocking optimized GC. The next cache check halves the cache, but never below half of the normal floor (48 MiB when the normal floor is 96 MiB).
+- `AutoDeleteCache` sets the unconstrained budget from the GPU's reported memory (50%, clamped 512 MiB-4 GiB), applies a 30% process budget on devices with 8 GiB or less of .NET-visible memory, and uses a normal emergency floor of at most 96 MiB. The 96 MiB value replaced 192 MiB in 0.0.5 because trims below 192 MiB were guaranteed no-ops in the field log. A real memory warning may now target 48 MiB.
 - `GetTextureCacheLimit` also stores the current cache size for `meliora_tex_cache_bytes`, which is what `texCache=` reports.
 
 The governor does not try to account for every allocation. It controls the caches it owns and reports what it sees; the rest of the footprint (buffers, the managed heap, MoltenVK/Metal allocations) is outside its direct control.

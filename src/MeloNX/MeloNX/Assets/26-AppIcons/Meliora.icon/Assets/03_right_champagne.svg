@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#FFFDF9"/>
+    <stop offset="0.52" stop-color="#F7F5EF"/>
+    <stop offset="1" stop-color="#EBE7DD"/>
+  </linearGradient>
+  <radialGradient id="light" cx="50%" cy="38%" r="74%">
+    <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.68"/>
+    <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#BDEAF5"/>
+    <stop offset="0.52" stop-color="#A9DDED"/>
+    <stop offset="1" stop-color="#86C8DC"/>
+  </linearGradient>
+  <linearGradient id="gold" x1="1" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#F7E2BF"/>
+    <stop offset="0.52" stop-color="#F2D4A9"/>
+    <stop offset="1" stop-color="#E8BA84"/>
+  </linearGradient>
+  <radialGradient id="pearl" cx="34%" cy="28%" r="76%">
+    <stop offset="0" stop-color="#FFFFFF"/>
+    <stop offset="0.48" stop-color="#FFFDF9"/>
+    <stop offset="1" stop-color="#F2D4A9"/>
+  </radialGradient>
+  <filter id="pearlShadow" x="-100%" y="-100%" width="300%" height="300%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="blur"/>
+    <feOffset dy="2" result="offset"/>
+    <feColorMatrix in="offset" type="matrix" values="0 0 0 0 0.53  0 0 0 0 0.46  0 0 0 0 0.34  0 0 0 0.18 0" result="shadow"/>
+    <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs><g fill="none" stroke-width="124" stroke-linecap="round" stroke-linejoin="round"><path d="M577 760 C622 520 664 280 738 280 L738 760" stroke="url(#gold)"/></g></svg>
