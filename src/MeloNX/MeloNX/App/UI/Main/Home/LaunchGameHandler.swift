@@ -137,6 +137,9 @@ class LaunchGameHandler: ObservableObject {
         let melioraAdaptive = UserDefaults.standard.object(forKey: "melioraAdaptive") as? Bool ?? true
         setenv("MELIORA_ADAPTIVE", melioraAdaptive ? "1" : "0", 1)
 
+        // Unified Memory experiment build only; also set in MeloNXApp.setupEnvironment().
+        setenv("MELIORA_UNIFIED_MEMORY", "1", 1)
+
         let target30 = UserDefaults.standard.bool(forKey: "melioraTarget30")
         setenv("MELIORA_TARGET_FPS", target30 ? "30" : "60", 1)
 

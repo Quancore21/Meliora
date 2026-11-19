@@ -110,6 +110,10 @@ struct MeloNXApp: View {
         let melioraAdaptive = UserDefaults.standard.object(forKey: "melioraAdaptive") as? Bool ?? true
         setenv("MELIORA_ADAPTIVE", melioraAdaptive ? "1" : "0", 1)
 
+        // Unified Memory experiment build only. This forces the MoltenVK
+        // unified-memory path so the paired run measures it; it is not in 0.0.5.
+        setenv("MELIORA_UNIFIED_MEMORY", "1", 1)
+
         let target30 = UserDefaults.standard.bool(forKey: "melioraTarget30")
         setenv("MELIORA_TARGET_FPS", target30 ? "30" : "60", 1)
 
