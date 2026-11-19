@@ -1,8 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Planned 0.0.6 fixes. Not released, not yet validated on device.
+
+### Fixed
+
+- **Duplicate render-target resize at the floor.** A down-step from 0.95x produced 0.9025x; the next step landed on 0.9000x and logged `0.90x -> 0.90x`. The 0.25% change recreated the host textures and views again for no visible benefit. The controller now snaps to the floor when the next step would land within 0.01 of it, and step lines print three decimals.
+- **Broken `[Meliora]` log lines.** The Swift governor wrote through buffered `print`, and `LogCapture` split each pipe chunk independently, so lines could be merged or lose their timestamp. `stdout` is now line-buffered, the governor writes complete timestamped lines, and `LogCapture` keeps the incomplete tail of each pipe until the newline arrives.
+- **Up-steps during memory pressure.** A step up is now blocked while `os_proc_available_memory()` is below 384 MB, with a throttled `step up blocked` line. This does not lower the peak footprint; it prevents the controller from making a bad situation worse.
+
+### Still open
+
+- The 10–15 minute Test B and a sustained 30 FPS run.
+- The memory peak at large scene transitions; the texture cache is not the cause.
+- The `MELIORA_UNIFIED_MEMORY=1` experiment. Results will be reported separately and are not part of a release.
+
 ## 0.0.5 (Adaptive Engine rebalance)
 
-Built from the first 0.0.4 field log (17-minute Super Mario Odyssey session on iPhone 17, iOS 27.2). The controller stepped down to its x0.85 floor about 6 minutes in and never climbed back, so most of the session rendered softer than 0.0.3 while the frame rate was already at target; the same log ended in an iOS memory kill at ~5.4–6 GB footprint. This release fixes what the log exposed.
+Built from the first 0.0.4 field log (17-minute Super Mario Odyssey session on iPhone 17, iOS 27.2). The controller stepped down to its x0.85 floor about 6 minutes in and never climbed back, so most of the session rendered softer than 0.0.3 while the frame rate was already at target; the same log ended abruptly at ~5.4–6 GB, with no termination marker, so an iOS kill is likely but unconfirmed. This release fixes what the log exposed.
 
 ### Changed
 
@@ -11,13 +27,27 @@ Built from the first 0.0.4 field log (17-minute Super Mario Odyssey session on i
   - The climb back is no longer hostage to hitches: 5 clean windows (~8 s) with an unloaded GPU thread (<50% busy), one step per 8 s, up to the starting scale — always the ceiling. CPU-bound slow windows and stall spikes no longer reset the climb; in 0.0.4 a single spike reset a 16-second streak, so the controller never returned to 1.00x once it had stepped down.
   - New `MELIORA_FLOOR` override (absolute scale, e.g. `0.75`) sets the floor explicitly for experiments.
 - **Texture cache emergency floor: 192 → 96 MiB.** `MinGovernedTextureSizeCapacity` formed a hard floor in `MemoryGovernor.GetTextureCacheLimit`, so every emergency trim with the cache below 192 MiB was a guaranteed no-op (`texture cache 130 MiB -> 130 MiB` in the field log). The game runs fine with the cache as low as ~47 MiB, so 96 MiB keeps a safety margin without blocking trims.
-- **Proactive memory trim fires earlier**: 3/4 of the headroom (~575 MB on an 8 GB iPhone) instead of 1/2 (~383 MB). The field log showed the process sitting below 900 MB free for a full minute before the kill, reacting only at the very end.
-- **Honest memory telemetry.** The 10-second `[Meliora] mem` line now reports `minAvail=` (the worst `os_proc_available_memory` over the window — transient dips were invisible in the instantaneous slice, which showed 1142 MB where the trim check saw 335 MB) and `texCache=` (current texture cache size, exported from the core), so the next long-session log shows what actually holds the memory.
+- **Proactive memory trim fires earlier**: 3/4 of the headroom (~575 MB on an 8 GB iPhone) instead of 1/2 (~383 MB). The field log reacted only at the very end, when the last shrink measured 265 MB available.
+- **Honest memory telemetry.** The 10-second `[Meliora] mem` line now reports `minAvail=` (the worst `os_proc_available_memory` over the window — transient dips were invisible in the instantaneous slice, which showed 1142 MB where the trim check saw 335 MB) and `texCache=` (current texture cache size, exported from the core), so the 0.0.5 logs show what actually holds the memory.
+
+### Field results (2026-11-18/19)
+
+Three SMO sessions on the reference iPhone 17:
+
+| Run | Length | Peak footprint | Minimum available | Outcome |
+| --- | --- | --- | --- | --- |
+| #1 | 4:33 | 6029 MB | 113 MB | 14 emergency + 9 proactive trims; no termination marker |
+| #2 | 5:39 | 5.57 GB | 575 MB | normal exit |
+| #3 | 6:11 | 5.52 GB | 621 MB | normal exit |
+
+No false step downs; #1 climbed from 0.90x to 1.00x in 56 s and #3 in 94 s, while 0.0.4 never climbed from 0.85x. The runs are 4.5–6.1 minutes, so the 10–15 minute Test B remains pending.
+
+Known issues found: the `0.90x -> 0.90x` duplicate is a real 0.9025 → 0.9000 resize; Swift `[Meliora]` lines have no timestamp and can be merged; memory pressure at the kingdom transition remains, with the texture cache at only 84–88 MiB at the 6.03 GB peak. The first two are fixed in Unreleased; the memory guard is mitigation, not a cure.
 
 ### Notes
 
-- Thresholds are constants at the top of `AdaptivePerformance.cs`; the next field log will show whether 0.90x and the +5% gate need further tuning.
-- A separate test build with `MELIORA_UNIFIED_MEMORY=1` will follow this release to measure how much of the footprint is host/device buffer duplication.
+- Thresholds are constants at the top of `AdaptivePerformance.cs`. The three 0.0.5 field runs left 0.90x and the +5% gate unchanged; a 10–15 minute run is still needed before treating them as settled.
+- A separate test build with `MELIORA_UNIFIED_MEMORY=1` is being prepared to measure how much of the footprint is host/device buffer duplication. It is not part of this release.
 
 ## 0.0.4 (Meliora Adaptive Engine)
 

@@ -1,6 +1,6 @@
 # Testing a Meliora release
 
-Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.5.
+Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.5, including what the first 0.0.5 field runs have and have not shown.
 
 Testing is manual and runs on a real device. CI builds and packages the app; it cannot measure FPS, thermal behaviour or memory pressure.
 
@@ -20,7 +20,7 @@ Testing is manual and runs on a real device. CI builds and packages the app; it 
 | Shader Cache | On |
 
 - In *Advanced Options*, keep the toggles at their released defaults unless a test explicitly targets one toggle.
-- Start warm. The reference baselines all started with `thermal=serious`; a cold-phone run is not comparable to them. The `thermal=` field in the `[Meliora] mem` line tells you which state you are in.
+- Start at a comparable thermal state. The 0.0.3 and 0.0.4 baselines started at `thermal=serious`; the 0.0.5 #1 run started at `thermal=fair` and reached `serious` during the kingdom transition. A cold-phone run is not comparable. The `thermal=` field in the `[Meliora] mem` line tells you which state you are in.
 - Let the first minutes pass. Shader compilation and pipeline creation cause hitches that are not steady state.
 - Do not share keys or firmware in a log. The in-app log should not contain them, but check before attaching a file.
 
@@ -45,11 +45,27 @@ Testing is manual and runs on a real device. CI builds and packages the app; it 
 | Heavy-scene median | 19.7–27.6 ms, `gpuBusy` 74–95% |
 | `GPU processing thread is too slow` warnings | 56 (~3.3/min) |
 | Footprint | 2.9 → 5.4 GB |
-| Free memory | 988 → 265 MB |
-| Emergency trims | 7, all no-ops (`texture cache 130 MiB -> 130 MiB`) |
-| Outcome | iOS killed the process at ~6 GB |
+| Available memory | ~3.2 GB at startup; ~1.3–1.4 GB for most of the session; 265 MB at the last shrink |
+| Emergency trims | 7; 32 of 33 cache shrinks were no-ops (7 MiB freed in total) |
+| Outcome | Ended abruptly at ~6 GB; no termination marker, so an iOS kill is likely but unconfirmed |
 
-0.0.5 is calibrated against this log. The expected improvements are listed in the acceptance criteria below; they are not claimed as measured until a 0.0.5 run confirms them.
+0.0.5 is calibrated against this log.
+
+### 0.0.5 (SMO 1.3.0, iPhone 17, iOS 27.2.1, three sessions)
+
+| Run | Length | Scene | Peak footprint | Minimum available | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| #1 | 4:33 | 2661781375 → 512560049 | 6029 MB | 113 MB | 14 emergency + 9 proactive trims; no termination marker |
+| #2 | 5:39 | 512560049 | 5.57 GB | 575 MB | normal exit |
+| #3 | 6:11 | 512560049 | 5.52 GB | 621 MB | normal exit |
+
+Controller: no false step downs; #1 climbed from 0.90x to 1.00x 56 s after reaching the floor, #3 after 94 s. The runs are shorter than Test B, so they confirm the policy but do not satisfy the 10–15 minute acceptance criteria.
+
+Known 0.0.5 defects found in these logs:
+
+- `0.90x -> 0.90x` is a real 0.9025 → 0.9000 resize, not a display artifact.
+- Swift `[Meliora]` lines have no timestamp and can be merged with C# lines; exact trim times are approximate.
+- Memory pressure at the kingdom transition remains; the texture cache was only 84–88 MiB at the peak.
 
 ## Test matrix
 
@@ -105,6 +121,8 @@ The release is considered validated when a 10–15 minute run on the reference r
 | Memory telemetry | `minAvail=` and `texCache=` present; trims visible if they fire. |
 | Stability | No unexplained crash or jetsam kill. |
 
+**0.0.5 status (2026-11-19): field-tested, not fully validated.** The three runs are 4.5–6.1 minutes. They pass the decision checks (no false step downs, evidence for every step, climb-back observed) but do not meet the 10–15 minute length, and run #1 has no confirmed termination. The release notes therefore describe 0.0.5 as field-tested, not fully validated.
+
 If a criterion fails, keep the log and open an issue with the relevant lines. Do not change multiple thresholds at once; a log with two changes cannot tell you which one mattered.
 
 ## Test C — Target 30 FPS
@@ -118,18 +136,28 @@ Check:
 - Pacing feels steadier and the device runs cooler, if the game is actually 30 FPS-bound.
 - A 60 FPS game will feel choppier with the toggle on; that is expected.
 
+On 2026-11-18 a 38-second smoke run confirmed target 30, budget 35.0 ms, median 33.3 ms, `gpuBusy` 6%, scale 1.00x. This validates the target wiring only; a sustained 30 FPS run is still pending.
+
 ## Test D — Unified Memory experiment
 
 This test uses a separate build with `MELIORA_UNIFIED_MEMORY=1`; it is not the release build. Do not mix its results with test A/B.
 
-Run the same route as test B and compare:
+The original 2661781375 → 512560049 route is no longer reproducible: the save has progressed past that transition. Use the current save and run both builds on the same route, including a kingdom transition if one is available. The comparison must be paired:
+
+1. Run 10–15 minutes on the standard 0.0.5 IPA from the current save.
+2. Let the device cool to the same thermal state.
+3. Run 10–15 minutes on the UnifiedMemory build from the same save.
+4. Keep both logs and compare the same part of the route.
+
+Do not compare a 5-minute run with a 15-minute run; the memory peak and the thermal state will not be comparable.
 
 | Metric | Where to look | Target |
 | --- | --- | --- |
-| Peak footprint | `footprint=` in the mem lines | Below 5.0–5.2 GB |
-| FPS in heavy scenes | `avgFps=` / `minFps=` and the adaptive medians | No regression versus the standard build |
 | Effective memory type | `memoryType=` in the `[Meliora] gpu:` line | `UnifiedMemory` |
-| Stability | Session length and crash/jetsam | No worse than the standard build |
+| Peak footprint | `footprint=` in the mem lines | Below the paired 0.0.5 control; report the delta and the absolute peak (the original absolute target was 5.0–5.2 GB, but 0.0.5 #1 peaked at 6.03 GB) |
+| FPS in heavy scenes | `avgFps=` / `minFps=` and the adaptive medians | No regression versus the standard build |
+| Memory trims | `LogShrink`, low-memory and emergency-trim lines | No more than the control, and no repeated no-ops below 200 MB available |
+| Stability | Session length and termination markers | Normal exit, as 0.0.5 #2/#3 did |
 
 If footprint does not improve, or FPS regresses, the experiment is rejected and the default path stays. Record both logs; the comparison is the deliverable.
 
@@ -166,6 +194,8 @@ The full interpretation is in [PERFORMANCE.md](PERFORMANCE.md#reading-the-log). 
 
 The periodic adaptive status is emitted every six windows (~10 s). A step line replaces the periodic line for that window. Warmup produces no decisions.
 
+Until 0.0.6, Swift-emitted `[Meliora] mem`, `low memory` and `governor` lines have no timestamp and can be split or merged with C# lines (for example `Gamepad2026-11-17 ...`). Use the nearest C# `MeloNX[...]` timestamp and treat sub-minute timing as approximate. 0.0.6 adds timestamps, line-buffered stdout and a per-pipe remainder buffer.
+
 ## What is not testable yet
 
 - *Smooth Pacing* is reserved. The core can follow a changed target, but the app does not re-apply settings mid-session, so the switch is a no-op in 0.0.5.
@@ -185,5 +215,6 @@ Export the log from the in-app Logs view and include:
 5. The `[Meliora] mem`, `[Meliora] adaptive` and `[Meliora] gpu` lines, ideally the whole log around the event.
 6. What you expected, what happened, and the shortest steps that reproduce it.
 7. For a step-down or memory problem: the periodic lines before and after the event.
+8. If `[Meliora]` lines are merged or have no timestamp, say so. This is a known 0.0.5 logging defect; the C# lines and the adaptive decisions are still usable.
 
 State clearly whether the run is test A, B, C, D or E. A report without these lines cannot be compared with the baselines.
