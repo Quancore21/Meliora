@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/MeloNX/MeloNX/Assets/Assets.xcassets/AppIcon.appiconset/nxgradientpng.png" alt="Meliora" width="120">
+  <img src="docs/assets/Meliora-icon.png" alt="Meliora" width="120">
 </p>
 
 <h1 align="center">Meliora</h1>
@@ -16,7 +16,7 @@
   <a href="https://github.com/Quancore21/Meliora/actions/workflows/ios.yml"><img src="https://img.shields.io/github/actions/workflow/status/Quancore21/Meliora/ios.yml?label=build" alt="Build status"></a>
 </p>
 
-**Current release: [0.0.5](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5)** — an Adaptive Engine rebalance built from the first 0.0.4 field log. Three 0.0.5 field sessions (4.5–6.1 minutes) confirmed the median gate, the 0.90x floor and climb-back; a 0.0.6 validation build has since passed a 10:06 Test B, and the final 0.0.6 build 29 passed an on-device smoke test (30 FPS target validated, idle-trim fix confirmed, Liquid Glass icon verified), but memory pressure at large scene transitions remains a known issue. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) explain what is known and what is still open. The separate `MELIORA_UNIFIED_MEMORY=1` experiment was tested and rejected; it is not enabled in release builds.
+**Current release: [0.0.6](https://github.com/Quancore21/Meliora/releases/tag/v0.0.6)** — a logging, icon and memory-governor polish release on top of the 0.0.5 Adaptive Engine rebalance. Build 25 passed a 10:06 Test B, and the final build 29 passed an on-device smoke test (30 FPS target validated, idle-trim fix confirmed, Liquid Glass icon verified), but memory pressure at large scene transitions remains a known issue. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.6) explain what is known and what is still open. The separate `MELIORA_UNIFIED_MEMORY=1` experiment was tested and rejected; it is not enabled in release builds.
 
 > **Unofficial project.** Meliora is an independent fork. It is **not affiliated with** the MeloNX team, the MeloVertex author or the Ryujinx project. Please do not ask them for support with Meliora.
 
@@ -48,7 +48,7 @@ The name is Latin for "better". The goal is not a new emulator: it is to keep wh
 
 ## Project status
 
-- **0.0.5 is the current release.** It reworks the adaptive controller (median gate, x0.90 floor, working climb-back), fixes the texture-cache trim floor, and adds honest memory telemetry. See the [changelog](CHANGELOG.md).
+- **0.0.6 is the current release.** 0.0.5 reworked the adaptive controller (median gate, x0.90 floor, working climb-back), fixed the texture-cache trim floor, and added honest memory telemetry. 0.0.6 adds snap-to-floor, line-atomic logs, the 384 MB up-step guard, the idle-trim cleanup and the Liquid Glass icon. See the [changelog](CHANGELOG.md).
 - **Device validation.** The 0.0.6 build 25 run lasted 10:06 on the reference iPhone 17 (iOS 27.2.1), peaked at 5779 MB with 358 MB minimum available, made no false step down and exited cleanly. The final build 29 (2026-11-20) was smoke-tested on device: the 30 FPS target path held 29–30 FPS with no false step down, the idle-trim fix produced zero repeated trims, and the Liquid Glass icon is the app icon. No run stepped down, so snap-to-floor and the 384 MB up-step guard remain unexercised in the field.
 - **Known 0.0.5 issues.** A step that lands on the floor can log `0.90x -> 0.90x` and recreate render targets for a 0.25% change; Swift `[Meliora]` lines in exported logs may be merged and lack timestamps; memory pressure at large scene transitions is still reproducible. The first two are fixed in the 0.0.6 validation build; the 0.0.6 build 25 log has zero merged or timestamp-less `[Meliora]` lines.
 - **Compatibility is inherited.** Meliora does not maintain its own game compatibility list and does not claim that a game that runs on MeloNX or Ryujinx runs here. The emulator core is unchanged in 0.0.5; only the performance plumbing around it changed.
