@@ -988,20 +988,38 @@ namespace Ryujinx.Graphics.Vulkan
                 return;
             }
 
-            MemoryAllocator.GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes);
+            MemoryAllocator.GetMemoryStats(
+                true,
+                out int vkBufBlockCount,
+                out ulong vkBufBlockBytes,
+                out ulong vkBufUsedBytes,
+                out ulong vkBufLargestFreeBytes);
+            MemoryAllocator.GetMemoryStats(
+                false,
+                out int vkNonBufBlockCount,
+                out ulong vkNonBufBlockBytes,
+                out ulong vkNonBufUsedBytes,
+                out ulong vkNonBufLargestFreeBytes);
             HostMemoryAllocator.GetMemoryStats(out int hostImportCount, out ulong hostImportBytes);
+            BackgroundResources.GetFlushBufferStats(out int flushBufferCount, out long flushBufferBytes);
 
             MelioraVulkanSnapshot snapshot = new()
             {
-                BlockCount = blockCount,
-                BlockBytes = (long)blockBytes,
-                UsedBytes = (long)usedBytes,
+                VkBufBlockCount = vkBufBlockCount,
+                VkBufBlockBytes = (long)vkBufBlockBytes,
+                VkBufUsedBytes = (long)vkBufUsedBytes,
+                VkBufLargestFreeBytes = (long)vkBufLargestFreeBytes,
+                VkNonBufBlockCount = vkNonBufBlockCount,
+                VkNonBufBlockBytes = (long)vkNonBufBlockBytes,
+                VkNonBufUsedBytes = (long)vkNonBufUsedBytes,
+                VkNonBufLargestFreeBytes = (long)vkNonBufLargestFreeBytes,
                 HostImportCount = hostImportCount,
                 HostImportBytes = (long)hostImportBytes,
                 LiveBufferCount = BufferManager.LiveBufferCount,
                 LiveBufferBytes = BufferManager.LiveBufferBytes,
                 BufferCreatesTotal = BufferManager.BufferCount,
-                FlushBufferBytes = BackgroundResources.GetFlushBufferSize(),
+                FlushBufferCount = flushBufferCount,
+                FlushBufferBytes = flushBufferBytes,
             };
 
             MelioraTelemetry.CaptureVulkanSnapshot(snapshot);

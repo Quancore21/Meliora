@@ -385,6 +385,7 @@ namespace Ryujinx.Headless.SDL2
                             out int bufferEntries,
                             out long bufferBytes,
                             out int multiRangeEntries,
+                            out long multiRangeLogicalBytes,
                             out int graphicsPrograms,
                             out int computePrograms);
 
@@ -393,6 +394,7 @@ namespace Ryujinx.Headless.SDL2
                             bufferEntries,
                             bufferBytes,
                             multiRangeEntries,
+                            multiRangeLogicalBytes,
                             graphicsPrograms,
                             computePrograms,
                             MemoryGovernor.AvailableBytes);

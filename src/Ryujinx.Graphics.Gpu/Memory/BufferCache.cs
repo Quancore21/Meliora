@@ -74,9 +74,15 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
         /// <summary>
         /// Meliora: gets the number of live buffer-cache entries and their total size.
-        /// Called on the GPU main thread for the periodic telemetry report.
+        /// Also returns the logical size of the multi-range buffers. Called on the GPU
+        /// main thread for the periodic telemetry report; logical range sizes are not
+        /// physical memory usage and must not be added to the physical snapshot.
         /// </summary>
-        public void GetMemorySnapshot(out int bufferCount, out ulong bufferBytes, out int multiRangeBufferCount)
+        public void GetMemorySnapshot(
+            out int bufferCount,
+            out ulong bufferBytes,
+            out int multiRangeBufferCount,
+            out ulong multiRangeLogicalBytes)
         {
             lock (_buffers)
             {
@@ -84,6 +90,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             }
 
             multiRangeBufferCount = _multiRangeBuffers.Count;
+            multiRangeLogicalBytes = _multiRangeBuffers.TotalSize;
         }
 
         /// <summary>

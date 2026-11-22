@@ -232,12 +232,14 @@ namespace Ryujinx.Graphics.Gpu
             out int bufferEntries,
             out long bufferBytes,
             out int multiRangeEntries,
+            out long multiRangeLogicalBytes,
             out int graphicsPrograms,
             out int computePrograms)
         {
             int entries = 0;
             long bytes = 0;
             int multiRange = 0;
+            long multiRangeLogical = 0;
             int graphics = 0;
             int compute = 0;
 
@@ -250,13 +252,15 @@ namespace Ryujinx.Graphics.Gpu
                     physicalMemory.BufferCache.GetMemorySnapshot(
                         out int bufferCount,
                         out ulong bufferSize,
-                        out int multiRangeCount);
+                        out int multiRangeCount,
+                        out ulong multiRangeBytes);
 
                     physicalMemory.ShaderCache.GetProgramCounts(out int graphicsCount, out int computeCount);
 
                     entries += bufferCount;
                     bytes += (long)bufferSize;
                     multiRange += multiRangeCount;
+                    multiRangeLogical += (long)multiRangeBytes;
                     graphics += graphicsCount;
                     compute += computeCount;
                 }
@@ -265,6 +269,7 @@ namespace Ryujinx.Graphics.Gpu
             bufferEntries = entries;
             bufferBytes = bytes;
             multiRangeEntries = multiRange;
+            multiRangeLogicalBytes = multiRangeLogical;
             graphicsPrograms = graphics;
             computePrograms = compute;
         }

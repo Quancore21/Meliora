@@ -110,14 +110,23 @@ namespace Ryujinx.Graphics.Vulkan
         }
 
         /// <summary>
-        /// Meliora: sums the committed blocks and their used ranges. Called on the
-        /// backend thread only, so the read lock never waits for another thread.
+        /// Meliora: sums the committed blocks and their used ranges for one allocator
+        /// category. Blocks created for buffers (<c>ForBuffer</c>) report as vkBuf, all
+        /// others as vkNonBuf. The largest free range is the maximum across all blocks
+        /// of the category, not the sum of per-block maxima. Called on the backend
+        /// thread only, so the read lock never waits for another thread.
         /// </summary>
-        public void GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes)
+        public void GetMemoryStats(
+            bool forBuffer,
+            out int blockCount,
+            out ulong blockBytes,
+            out ulong usedBytes,
+            out ulong largestFreeRange)
         {
             blockCount = 0;
             blockBytes = 0;
             usedBytes = 0;
+            largestFreeRange = 0;
 
             _lock.EnterReadLock();
 
@@ -125,11 +134,23 @@ namespace Ryujinx.Graphics.Vulkan
             {
                 for (int i = 0; i < _blockLists.Count; i++)
                 {
-                    _blockLists[i].GetMemoryStats(out int blocks, out ulong total, out ulong used);
+                    MemoryAllocatorBlockList blockList = _blockLists[i];
+
+                    if (blockList.ForBuffer != forBuffer)
+                    {
+                        continue;
+                    }
+
+                    blockList.GetMemoryStats(out int blocks, out ulong total, out ulong used, out ulong largest);
 
                     blockCount += blocks;
                     blockBytes += total;
                     usedBytes += used;
+
+                    if (largest > largestFreeRange)
+                    {
+                        largestFreeRange = largest;
+                    }
                 }
             }
             finally

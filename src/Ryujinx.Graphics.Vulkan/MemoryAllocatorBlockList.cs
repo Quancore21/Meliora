@@ -137,18 +137,25 @@ namespace Ryujinx.Graphics.Vulkan
             }
 
             /// <summary>
-            /// Gets the number of bytes that are not currently suballocated.
+            /// Meliora: computes the free bytes and the largest single contiguous free
+            /// range in one pass, for the allocator snapshot.
             /// </summary>
-            public ulong GetFreeBytes()
+            public void GetFreeStats(out ulong freeBytes, out ulong largestFreeRange)
             {
-                ulong freeBytes = 0;
+                freeBytes = 0;
+                largestFreeRange = 0;
 
                 for (int i = 0; i < _freeRanges.Count; i++)
                 {
-                    freeBytes += _freeRanges[i].Size;
-                }
+                    ulong rangeSize = _freeRanges[i].Size;
 
-                return freeBytes;
+                    freeBytes += rangeSize;
+
+                    if (rangeSize > largestFreeRange)
+                    {
+                        largestFreeRange = rangeSize;
+                    }
+                }
             }
 
             public int CompareTo(Block other)
@@ -319,14 +326,16 @@ namespace Ryujinx.Graphics.Vulkan
         }
 
         /// <summary>
-        /// Meliora: sums the committed blocks and their suballocated bytes. Called on
-        /// the backend thread only.
+        /// Meliora: sums the committed blocks, their suballocated bytes and the largest
+        /// single contiguous free range across all blocks. Called on the backend thread
+        /// only, so the read lock never waits for another thread.
         /// </summary>
-        public void GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes)
+        public void GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes, out ulong largestFreeRange)
         {
             blockCount = 0;
             blockBytes = 0;
             usedBytes = 0;
+            largestFreeRange = 0;
 
             _lock.EnterReadLock();
 
@@ -338,7 +347,15 @@ namespace Ryujinx.Graphics.Vulkan
 
                     blockCount++;
                     blockBytes += block.Size;
-                    usedBytes += block.Size - block.GetFreeBytes();
+
+                    block.GetFreeStats(out ulong freeBytes, out ulong blockLargestFreeRange);
+
+                    usedBytes += block.Size - freeBytes;
+
+                    if (blockLargestFreeRange > largestFreeRange)
+                    {
+                        largestFreeRange = blockLargestFreeRange;
+                    }
                 }
             }
             finally

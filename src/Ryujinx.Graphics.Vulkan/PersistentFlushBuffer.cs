@@ -1,6 +1,8 @@
 using Ryujinx.Common;
 using Ryujinx.Graphics.GAL;
 using System;
+using System.Diagnostics;
+using System.Threading;
 
 namespace Ryujinx.Graphics.Vulkan
 {
@@ -10,10 +12,14 @@ namespace Ryujinx.Graphics.Vulkan
 
         private BufferHolder _flushStorage;
 
+        // The telemetry thread reads the size while the owner thread may be creating,
+        // resizing or disposing the storage, so it is kept in a volatile field.
+        private int _bufferSize;
+
         /// <summary>
-        /// Current size of the persistent readback buffer, or zero before the first use.
+        /// Current size of the persistent readback buffer, or zero before first use.
         /// </summary>
-        public int BufferSize => _flushStorage?.Size ?? 0;
+        public int BufferSize => Volatile.Read(ref _bufferSize);
 
         public PersistentFlushBuffer(VulkanRenderer gd)
         {
@@ -22,14 +28,18 @@ namespace Ryujinx.Graphics.Vulkan
 
         private BufferHolder ResizeIfNeeded(int size)
         {
-            var flushStorage = _flushStorage;
+            var flushStorage = Volatile.Read(ref _flushStorage);
 
-            if (flushStorage == null || size > _flushStorage.Size)
+            if (flushStorage == null || size > flushStorage.Size)
             {
                 flushStorage?.Dispose();
 
+                Volatile.Write(ref _bufferSize, 0);
+
                 flushStorage = _gd.BufferManager.Create(_gd, size);
-                _flushStorage = flushStorage;
+
+                Volatile.Write(ref _flushStorage, flushStorage);
+                Volatile.Write(ref _bufferSize, flushStorage.Size);
             }
 
             return flushStorage;
@@ -37,7 +47,7 @@ namespace Ryujinx.Graphics.Vulkan
 
         public Span<byte> GetBufferData(CommandBufferPool cbp, BufferHolder buffer, int offset, int size)
         {
-            MelioraTelemetry.AddReadback(size);
+            long melioraStart = Stopwatch.GetTimestamp();
 
             var flushStorage = ResizeIfNeeded(size);
             Auto<DisposableBuffer> srcBuffer;
@@ -60,12 +70,19 @@ namespace Ryujinx.Graphics.Vulkan
 
             flushStorage.WaitForFences();
             srcBuffer?.DecrementReferenceCount();
-            return flushStorage.GetDataStorage(0, size);
+
+            Span<byte> result = flushStorage.GetDataStorage(0, size);
+
+            // Meliora: CPU-side wall time of the whole readback call, including the fence
+            // wait above; not pure GPU copy time.
+            MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+
+            return result;
         }
 
         public Span<byte> GetTextureData(CommandBufferPool cbp, TextureView view, int size)
         {
-            MelioraTelemetry.AddReadback(size);
+            long melioraStart = Stopwatch.GetTimestamp();
 
             TextureCreateInfo info = view.Info;
 
@@ -80,12 +97,19 @@ namespace Ryujinx.Graphics.Vulkan
             }
 
             flushStorage.WaitForFences();
-            return flushStorage.GetDataStorage(0, size);
+
+            Span<byte> result = flushStorage.GetDataStorage(0, size);
+
+            // Meliora: CPU-side wall time of the whole readback call, including the fence
+            // wait above; not pure GPU copy time.
+            MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+
+            return result;
         }
 
         public Span<byte> GetTextureData(CommandBufferPool cbp, TextureView view, int size, int layer, int level)
         {
-            MelioraTelemetry.AddReadback(size);
+            long melioraStart = Stopwatch.GetTimestamp();
 
             var flushStorage = ResizeIfNeeded(size);
 
@@ -98,12 +122,24 @@ namespace Ryujinx.Graphics.Vulkan
             }
 
             flushStorage.WaitForFences();
-            return flushStorage.GetDataStorage(0, size);
+
+            Span<byte> result = flushStorage.GetDataStorage(0, size);
+
+            // Meliora: CPU-side wall time of the whole readback call, including the fence
+            // wait above; not pure GPU copy time.
+            MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+
+            return result;
         }
 
         public void Dispose()
         {
-            _flushStorage.Dispose();
+            BufferHolder flushStorage = Volatile.Read(ref _flushStorage);
+
+            flushStorage?.Dispose();
+
+            Volatile.Write(ref _flushStorage, null);
+            Volatile.Write(ref _bufferSize, 0);
         }
     }
 }

@@ -33,15 +33,21 @@ namespace Ryujinx.Common
     /// </summary>
     public struct MelioraVulkanSnapshot
     {
-        public int BlockCount;
-        public long BlockBytes;
-        public long UsedBytes;
+        public int VkBufBlockCount;
+        public long VkBufBlockBytes;
+        public long VkBufUsedBytes;
+        public long VkBufLargestFreeBytes;
+        public int VkNonBufBlockCount;
+        public long VkNonBufBlockBytes;
+        public long VkNonBufUsedBytes;
+        public long VkNonBufLargestFreeBytes;
         public int HostImportCount;
         public long HostImportBytes;
         public int LiveBufferCount;
         public long LiveBufferBytes;
         public int BufferCreatesTotal;
-        public int FlushBufferBytes;
+        public int FlushBufferCount;
+        public long FlushBufferBytes;
     }
 
     /// <summary>
@@ -65,13 +71,19 @@ namespace Ryujinx.Common
         private const int StateCapturingHost = 2;
         private const int StateHostReady = 3;
         private const int StateCapturingVulkan = 4;
+        private const int StatePreparing = 5;
 
         private sealed class Counters
         {
             public readonly float[] FrameIntervals = new float[FrameCapacity];
 
             public int FrameCount;
-            public int FrameDropped;
+
+            /// <summary>
+            /// Number of frame intervals that did not fit in the 2048-sample ring.
+            /// This is a sampling overflow, not a dropped frame.
+            /// </summary>
+            public int FrameSampleOverflow;
 
             public int CpuFrames;
             public long CpuTicksSum;
@@ -100,6 +112,13 @@ namespace Ryujinx.Common
 
             public int FencePolls;
             public int FencePollHits;
+            public int FencePollErrors;
+            public int FenceTimed;
+            public int FenceTimedHits;
+            public int FenceTimedTimeouts;
+            public int FenceTimedErrors;
+            public long FenceTimedTicksSum;
+            public long FenceTimedTicksMax;
             public int FenceBlocks;
             public int FenceBlockTimeouts;
             public long FenceBlockTicksSum;
@@ -122,6 +141,8 @@ namespace Ryujinx.Common
 
             public int Readbacks;
             public long ReadbackBytes;
+            public long ReadbackTicksSum;
+            public long ReadbackTicksMax;
 
             public int VkBlockAllocs;
             public long VkBlockAllocBytes;
@@ -136,7 +157,7 @@ namespace Ryujinx.Common
             public void Reset()
             {
                 FrameCount = 0;
-                FrameDropped = 0;
+                FrameSampleOverflow = 0;
 
                 CpuFrames = 0;
                 CpuTicksSum = 0;
@@ -165,6 +186,13 @@ namespace Ryujinx.Common
 
                 FencePolls = 0;
                 FencePollHits = 0;
+                FencePollErrors = 0;
+                FenceTimed = 0;
+                FenceTimedHits = 0;
+                FenceTimedTimeouts = 0;
+                FenceTimedErrors = 0;
+                FenceTimedTicksSum = 0;
+                FenceTimedTicksMax = 0;
                 FenceBlocks = 0;
                 FenceBlockTimeouts = 0;
                 FenceBlockTicksSum = 0;
@@ -187,6 +215,8 @@ namespace Ryujinx.Common
 
                 Readbacks = 0;
                 ReadbackBytes = 0;
+                ReadbackTicksSum = 0;
+                ReadbackTicksMax = 0;
 
                 VkBlockAllocs = 0;
                 VkBlockAllocBytes = 0;
@@ -208,7 +238,7 @@ namespace Ryujinx.Common
                 }
 
                 FrameCount = count;
-                FrameDropped = other.FrameDropped;
+                FrameSampleOverflow = other.FrameSampleOverflow;
 
                 CpuFrames = other.CpuFrames;
                 CpuTicksSum = other.CpuTicksSum;
@@ -237,6 +267,13 @@ namespace Ryujinx.Common
 
                 FencePolls = other.FencePolls;
                 FencePollHits = other.FencePollHits;
+                FencePollErrors = other.FencePollErrors;
+                FenceTimed = other.FenceTimed;
+                FenceTimedHits = other.FenceTimedHits;
+                FenceTimedTimeouts = other.FenceTimedTimeouts;
+                FenceTimedErrors = other.FenceTimedErrors;
+                FenceTimedTicksSum = other.FenceTimedTicksSum;
+                FenceTimedTicksMax = other.FenceTimedTicksMax;
                 FenceBlocks = other.FenceBlocks;
                 FenceBlockTimeouts = other.FenceBlockTimeouts;
                 FenceBlockTicksSum = other.FenceBlockTicksSum;
@@ -259,6 +296,8 @@ namespace Ryujinx.Common
 
                 Readbacks = other.Readbacks;
                 ReadbackBytes = other.ReadbackBytes;
+                ReadbackTicksSum = other.ReadbackTicksSum;
+                ReadbackTicksMax = other.ReadbackTicksMax;
 
                 VkBlockAllocs = other.VkBlockAllocs;
                 VkBlockAllocBytes = other.VkBlockAllocBytes;
@@ -277,8 +316,20 @@ namespace Ryujinx.Common
             public int BufferEntries;
             public long BufferBytes;
             public int MultiRangeEntries;
+            public long MultiRangeLogicalBytes;
             public int GraphicsPrograms;
             public int ComputePrograms;
+
+            // Managed-heap snapshot. GCMemoryInfo describes the most recent
+            // collection (GcIndex); these values are process-wide and must not be
+            // added to guest or Vulkan allocations.
+            public long GcAllocatedBytes;
+            public long GcCommittedBytes;
+            public long GcHeapBytes;
+            public long GcFragmentedBytes;
+            public long GcIndex;
+            public int GcGen2;
+
             public MelioraVulkanSnapshot Vulkan;
         }
 
@@ -293,9 +344,17 @@ namespace Ryujinx.Common
         private static int _hostBufferEntries;
         private static long _hostBufferBytes;
         private static int _hostMultiRangeEntries;
+        private static long _hostMultiRangeLogicalBytes;
         private static int _hostGraphicsPrograms;
         private static int _hostComputePrograms;
         private static long _hostAvailableBytes;
+
+        private static long _hostGcAllocatedBytes;
+        private static long _hostGcCommittedBytes;
+        private static long _hostGcHeapBytes;
+        private static long _hostGcFragmentedBytes;
+        private static long _hostGcIndex;
+        private static int _hostGcGen2;
 
         private static MelioraVulkanSnapshot _vulkanSnapshot;
         private static int _frozenSlot = -1;
@@ -338,9 +397,16 @@ namespace Ryujinx.Common
         {
             EnsureFormatter();
 
+            // StatePreparing keeps a delayed previous report from being overwritten: a new
+            // timer tick cannot touch _pendingTexCacheBytes until this one has been written.
+            if (Interlocked.CompareExchange(ref _requestState, StatePreparing, StateIdle) != StateIdle)
+            {
+                return;
+            }
+
             Volatile.Write(ref _pendingTexCacheBytes, texCacheBytes);
 
-            Interlocked.CompareExchange(ref _requestState, StateRequested, StateIdle);
+            Volatile.Write(ref _requestState, StateRequested);
         }
 
         /// <summary>
@@ -368,6 +434,7 @@ namespace Ryujinx.Common
             int bufferEntries,
             long bufferBytes,
             int multiRangeEntries,
+            long multiRangeLogicalBytes,
             int graphicsPrograms,
             int computePrograms,
             long availableBytes)
@@ -392,9 +459,19 @@ namespace Ryujinx.Common
             _hostBufferEntries = bufferEntries;
             _hostBufferBytes = bufferBytes;
             _hostMultiRangeEntries = multiRangeEntries;
+            _hostMultiRangeLogicalBytes = multiRangeLogicalBytes;
             _hostGraphicsPrograms = graphicsPrograms;
             _hostComputePrograms = computePrograms;
             _hostAvailableBytes = availableBytes;
+
+            GCMemoryInfo gcInfo = GC.GetGCMemoryInfo();
+
+            _hostGcAllocatedBytes = GC.GetTotalMemory(false);
+            _hostGcCommittedBytes = gcInfo.TotalCommittedBytes;
+            _hostGcHeapBytes = gcInfo.HeapSizeBytes;
+            _hostGcFragmentedBytes = gcInfo.FragmentedBytes;
+            _hostGcIndex = gcInfo.Index;
+            _hostGcGen2 = GC.CollectionCount(2);
 
             Volatile.Write(ref _requestState, StateHostReady);
         }
@@ -454,8 +531,15 @@ namespace Ryujinx.Common
                 packet.BufferEntries = _hostBufferEntries;
                 packet.BufferBytes = _hostBufferBytes;
                 packet.MultiRangeEntries = _hostMultiRangeEntries;
+                packet.MultiRangeLogicalBytes = _hostMultiRangeLogicalBytes;
                 packet.GraphicsPrograms = _hostGraphicsPrograms;
                 packet.ComputePrograms = _hostComputePrograms;
+                packet.GcAllocatedBytes = _hostGcAllocatedBytes;
+                packet.GcCommittedBytes = _hostGcCommittedBytes;
+                packet.GcHeapBytes = _hostGcHeapBytes;
+                packet.GcFragmentedBytes = _hostGcFragmentedBytes;
+                packet.GcIndex = _hostGcIndex;
+                packet.GcGen2 = _hostGcGen2;
                 packet.Vulkan = _vulkanSnapshot;
 
                 _readyPackets[_readyTail] = packetIndex;
@@ -601,6 +685,8 @@ namespace Ryujinx.Common
             _lineBuilder.Append(" bufMem=");
             AppendMiB(packet.BufferBytes);
             _lineBuilder.Append(" multiEntries=").Append(packet.MultiRangeEntries);
+            _lineBuilder.Append(" multiLogicalMem=");
+            AppendMiB(packet.MultiRangeLogicalBytes);
             _lineBuilder.Append(" shaderG=").Append(packet.GraphicsPrograms);
             _lineBuilder.Append(" shaderC=").Append(packet.ComputePrograms);
             _lineBuilder.Append(" avail=");
@@ -614,11 +700,33 @@ namespace Ryujinx.Common
                 AppendMiB(packet.AvailableBytes, "MB");
             }
 
-            _lineBuilder.Append(" | physical vkBlocks=").Append(packet.Vulkan.BlockCount);
-            _lineBuilder.Append(" vkMem=");
-            AppendMiB(packet.Vulkan.BlockBytes);
-            _lineBuilder.Append(" vkUsed=");
-            AppendMiB(packet.Vulkan.UsedBytes);
+            // Managed heap only: these values describe the last GC (idx) and are not
+            // additive with guest or Vulkan allocations.
+            _lineBuilder.Append(" | gc alloc=");
+            AppendMiB(packet.GcAllocatedBytes);
+            _lineBuilder.Append(" commit=");
+            AppendMiB(packet.GcCommittedBytes);
+            _lineBuilder.Append(" heap=");
+            AppendMiB(packet.GcHeapBytes);
+            _lineBuilder.Append(" frag=");
+            AppendMiB(packet.GcFragmentedBytes);
+            _lineBuilder.Append(" idx=").Append(packet.GcIndex);
+            _lineBuilder.Append(" gen2=").Append(packet.GcGen2);
+
+            _lineBuilder.Append(" | physical vkBuf blocks=").Append(packet.Vulkan.VkBufBlockCount);
+            _lineBuilder.Append(" mem=");
+            AppendMiB(packet.Vulkan.VkBufBlockBytes);
+            _lineBuilder.Append(" used=");
+            AppendMiB(packet.Vulkan.VkBufUsedBytes);
+            _lineBuilder.Append(" largestSuballocFree=");
+            AppendMiB(packet.Vulkan.VkBufLargestFreeBytes);
+            _lineBuilder.Append(" vkNonBuf blocks=").Append(packet.Vulkan.VkNonBufBlockCount);
+            _lineBuilder.Append(" mem=");
+            AppendMiB(packet.Vulkan.VkNonBufBlockBytes);
+            _lineBuilder.Append(" used=");
+            AppendMiB(packet.Vulkan.VkNonBufUsedBytes);
+            _lineBuilder.Append(" largestSuballocFree=");
+            AppendMiB(packet.Vulkan.VkNonBufLargestFreeBytes);
             _lineBuilder.Append(" liveBufs=").Append(packet.Vulkan.LiveBufferCount);
             _lineBuilder.Append(" liveBufMem=");
             AppendMiB(packet.Vulkan.LiveBufferBytes);
@@ -626,6 +734,7 @@ namespace Ryujinx.Common
             _lineBuilder.Append(" hostImports=").Append(packet.Vulkan.HostImportCount);
             _lineBuilder.Append(" hostImportMem=");
             AppendMiB(packet.Vulkan.HostImportBytes);
+            _lineBuilder.Append(" flushBufs=").Append(packet.Vulkan.FlushBufferCount);
             _lineBuilder.Append(" flushBuf=");
             AppendMiB(packet.Vulkan.FlushBufferBytes);
 
@@ -634,7 +743,7 @@ namespace Ryujinx.Common
             _lineBuilder.Clear();
 
             _lineBuilder.Append("[Meliora] perf-detail frames=").Append(frameCount);
-            _lineBuilder.Append(" drop=").Append(counters.FrameDropped);
+            _lineBuilder.Append(" sampleOverflow=").Append(counters.FrameSampleOverflow);
             AppendMs(" p50", p50);
             AppendMs(" p95", p95);
             AppendMs(" p99", p99);
@@ -645,12 +754,23 @@ namespace Ryujinx.Common
             AppendMs(" presentMax", TicksToMs(counters.PresentTicksMax));
 
             _lineBuilder.Append(" | sync fencePoll=").Append(counters.FencePolls);
-            _lineBuilder.Append(" fenceHit=").Append(counters.FencePollHits);
+            _lineBuilder.Append(" fencePollHit=").Append(counters.FencePollHits);
+            _lineBuilder.Append(" fencePollErr=").Append(counters.FencePollErrors);
+            _lineBuilder.Append(" fenceTimed=").Append(counters.FenceTimed);
+            _lineBuilder.Append(" fenceTimedHit=").Append(counters.FenceTimedHits);
+            _lineBuilder.Append(" fenceTimedTimeout=").Append(counters.FenceTimedTimeouts);
+            _lineBuilder.Append(" fenceTimedErr=").Append(counters.FenceTimedErrors);
+            AppendMs(" fenceTimedAvg", counters.FenceTimed != 0
+                ? TicksToMs(counters.FenceTimedTicksSum) / counters.FenceTimed
+                : 0);
+            AppendMs(" fenceTimedMax", TicksToMs(counters.FenceTimedTicksMax));
             _lineBuilder.Append(" fenceBlock=").Append(counters.FenceBlocks);
             AppendMs(" fenceBlockAvg", counters.FenceBlocks != 0
                 ? TicksToMs(counters.FenceBlockTicksSum) / counters.FenceBlocks
                 : 0);
             AppendMs(" fenceBlockMax", TicksToMs(counters.FenceBlockTicksMax));
+            // fenceTimeouts counts the internal 100 ms Result.Timeout iterations of
+            // WaitAllIndefinitely, not final failures: the loop keeps waiting.
             _lineBuilder.Append(" fenceTimeouts=").Append(counters.FenceBlockTimeouts);
             _lineBuilder.Append(" cpuWait=").Append(counters.CpuWaits);
             AppendMs(" cpuWaitAvg", counters.CpuWaits != 0
@@ -676,6 +796,12 @@ namespace Ryujinx.Common
             _lineBuilder.Append(" readback=").Append(counters.Readbacks);
             _lineBuilder.Append(" readbackMem=");
             AppendMiB(counters.ReadbackBytes);
+            // CPU-side wall time of the readback call, including any fence wait;
+            // not pure GPU copy time.
+            AppendMs(" readbackAvg", counters.Readbacks != 0
+                ? TicksToMs(counters.ReadbackTicksSum) / counters.Readbacks
+                : 0);
+            AppendMs(" readbackMax", TicksToMs(counters.ReadbackTicksMax));
 
             _lineBuilder.Append(" | vk blockAlloc=").Append(counters.VkBlockAllocs);
             _lineBuilder.Append(" blockAllocMem=");
@@ -851,7 +977,7 @@ namespace Ryujinx.Common
                 }
                 else
                 {
-                    Interlocked.Increment(ref counters.FrameDropped);
+                    Interlocked.Increment(ref counters.FrameSampleOverflow);
                 }
             }
         }
@@ -910,17 +1036,48 @@ namespace Ryujinx.Common
             Interlocked.Increment(ref writer.Counters.PipelineLookupMiss);
         }
 
-        public static void AddFencePoll(bool signaled)
+        public static void AddFencePoll(bool hit, bool error)
         {
             using SlotWriter writer = new();
             Counters counters = writer.Counters;
 
             Interlocked.Increment(ref counters.FencePolls);
 
-            if (signaled)
+            if (hit)
             {
                 Interlocked.Increment(ref counters.FencePollHits);
             }
+
+            if (error)
+            {
+                Interlocked.Increment(ref counters.FencePollErrors);
+            }
+        }
+
+        public static void AddFenceTimed(long ticks, bool hit, bool timedOut, bool error)
+        {
+            using SlotWriter writer = new();
+            Counters counters = writer.Counters;
+
+            Interlocked.Increment(ref counters.FenceTimed);
+
+            if (hit)
+            {
+                Interlocked.Increment(ref counters.FenceTimedHits);
+            }
+
+            if (timedOut)
+            {
+                Interlocked.Increment(ref counters.FenceTimedTimeouts);
+            }
+
+            if (error)
+            {
+                Interlocked.Increment(ref counters.FenceTimedErrors);
+            }
+
+            Interlocked.Add(ref counters.FenceTimedTicksSum, ticks);
+            UpdateMax(ref counters.FenceTimedTicksMax, ticks);
         }
 
         public static void AddFenceBlock(long ticks)
@@ -977,13 +1134,19 @@ namespace Ryujinx.Common
             UpdateMax(ref counters.BufferFlushTicksMax, ticks);
         }
 
-        public static void AddReadback(long bytes)
+        /// <summary>
+        /// Records one readback: CPU-side wall time of the call (including any fence
+        /// wait) and the number of bytes requested, not pure GPU copy time.
+        /// </summary>
+        public static void AddReadback(long ticks, long bytes)
         {
             using SlotWriter writer = new();
             Counters counters = writer.Counters;
 
             Interlocked.Increment(ref counters.Readbacks);
             Interlocked.Add(ref counters.ReadbackBytes, bytes);
+            Interlocked.Add(ref counters.ReadbackTicksSum, ticks);
+            UpdateMax(ref counters.ReadbackTicksMax, ticks);
         }
 
         public static void AddVkBlockAlloc(long bytes)

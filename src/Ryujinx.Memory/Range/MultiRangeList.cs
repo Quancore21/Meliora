@@ -11,6 +11,12 @@ namespace Ryujinx.Memory.Range
         public int Count { get; private set; }
 
         /// <summary>
+        /// Sum of the logical sizes of all live items. A diagnostic counter for the
+        /// telemetry snapshot; a logical range size, not physical memory usage.
+        /// </summary>
+        public ulong TotalSize { get; private set; }
+
+        /// <summary>
         /// Creates a new range list.
         /// </summary>
         public MultiRangeList()
@@ -39,6 +45,8 @@ namespace Ryujinx.Memory.Range
             }
 
             Count++;
+
+            TotalSize += range.GetSize();
         }
 
         /// <summary>
@@ -68,6 +76,10 @@ namespace Ryujinx.Memory.Range
             {
                 // All deleted intervals are for the same item - the one we removed.
                 Count--;
+
+                ulong removedSize = range.GetSize();
+
+                TotalSize = removedSize <= TotalSize ? TotalSize - removedSize : 0;
             }
 
             return removed > 0;

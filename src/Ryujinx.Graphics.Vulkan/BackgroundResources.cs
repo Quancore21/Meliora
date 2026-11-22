@@ -45,23 +45,37 @@ namespace Ryujinx.Graphics.Vulkan
 
         public PersistentFlushBuffer GetFlushBuffer()
         {
-            _flushBuffer ??= new PersistentFlushBuffer(_gd);
+            PersistentFlushBuffer flushBuffer = Volatile.Read(ref _flushBuffer);
 
-            return _flushBuffer;
+            if (flushBuffer == null)
+            {
+                flushBuffer = new PersistentFlushBuffer(_gd);
+
+                Volatile.Write(ref _flushBuffer, flushBuffer);
+            }
+
+            return flushBuffer;
         }
 
         /// <summary>
         /// Meliora: current size of this thread's readback buffer, zero before first use.
+        /// The reference and its size are read with Volatile, so the telemetry thread can
+        /// call this while the owner thread creates, resizes or disposes the buffer.
         /// </summary>
         public int GetFlushBufferSize()
         {
-            return _flushBuffer?.BufferSize ?? 0;
+            return Volatile.Read(ref _flushBuffer)?.BufferSize ?? 0;
         }
 
         public void Dispose()
         {
             _pool?.Dispose();
-            _flushBuffer?.Dispose();
+
+            PersistentFlushBuffer flushBuffer = Volatile.Read(ref _flushBuffer);
+
+            flushBuffer?.Dispose();
+
+            Volatile.Write(ref _flushBuffer, null);
         }
     }
 
@@ -115,11 +129,14 @@ namespace Ryujinx.Graphics.Vulkan
         }
 
         /// <summary>
-        /// Meliora: largest readback buffer among the per-thread background resources.
+        /// Meliora: counts and sums the sizes of all live per-thread readback buffers.
+        /// Each thread owns its own buffer, so sizes are read with Volatile; the sum and
+        /// count are a snapshot, not a maximum.
         /// </summary>
-        public int GetFlushBufferSize()
+        public void GetFlushBufferStats(out int count, out long totalBytes)
         {
-            int size = 0;
+            count = 0;
+            totalBytes = 0;
 
             lock (_resources)
             {
@@ -127,14 +144,13 @@ namespace Ryujinx.Graphics.Vulkan
                 {
                     int resourceSize = tuple.Value.GetFlushBufferSize();
 
-                    if (resourceSize > size)
+                    if (resourceSize > 0)
                     {
-                        size = resourceSize;
+                        count++;
+                        totalBytes += resourceSize;
                     }
                 }
             }
-
-            return size;
         }
 
         public void Dispose()

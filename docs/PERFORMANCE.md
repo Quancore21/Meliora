@@ -304,6 +304,23 @@ How to read them:
 - `fps` is the instantaneous value at the log tick; `avgFps` and `minFps` cover the window.
 - `thermal` is the iOS thermal state; compare runs at a similar state.
 
+### Detail lines (0.0.7)
+
+The core emits two extra lines every 10 seconds, right after the `[Meliora] mem` line, when the app asks for a report:
+
+```text
+[Meliora] mem-detail guest app=.../...MiB applet=.../...MiB svc=.../...MiB nv=.../...MiB | owners tex=...MiB bufEntries=... bufMem=...MiB multiEntries=... multiLogicalMem=...MiB shaderG=... shaderC=... avail=...MB | gc alloc=...MiB commit=...MiB heap=...MiB frag=...MiB idx=... gen2=... | physical vkBuf blocks=... mem=...MiB used=...MiB largestSuballocFree=...MiB vkNonBuf blocks=... mem=...MiB used=...MiB largestSuballocFree=...MiB liveBufs=... liveBufMem=...MiB bufCreatesTotal=... hostImports=... hostImportMem=...MiB flushBufs=... flushBuf=...MiB
+[Meliora] perf-detail frames=... sampleOverflow=... p50=...ms p95=...ms p99=...ms max=...ms cpuAvg=...ms cpuMax=...ms presentAvg=...ms presentMax=...ms | sync fencePoll=... fencePollHit=... fencePollErr=... fenceTimed=... fenceTimedHit=... fenceTimedTimeout=... fenceTimedErr=... fenceTimedAvg=...ms fenceTimedMax=...ms fenceBlock=... fenceBlockAvg=...ms fenceBlockMax=...ms fenceTimeouts=... cpuWait=... | buf migrate=... flush=... readback=... readbackMem=...MiB readbackAvg=...ms readbackMax=...ms | vk blockAlloc=... blockFree=... | shader translate=... create=... linkPoll=... linkBlock=... pipelineCacheNull=... pipelineLookupMiss=...
+```
+
+- `guest` is the emulated memory regions (application, applet, service, NV services): used/total MiB from the guest page heaps.
+- `owners` is the logical owners: texture cache, buffer-cache entries and bytes, multi-range buffer entries and their **logical** size (`multiLogicalMem`), live shader programs, and the app's worst `os_proc_available_memory()`.
+- `gc` is the managed heap only: `alloc` is `GC.GetTotalMemory(false)`; `commit`/`heap`/`frag` come from `GC.GetGCMemoryInfo()`, which describes the most recent collection (`idx`); `gen2` is the gen-2 collection count. These values are not additive with guest or Vulkan memory.
+- `physical` is the real Vulkan device memory, split by what was created for buffers (`vkBuf`) and everything else (`vkNonBuf`): committed blocks (`blocks`), total (`mem`), suballocated (`used`) and the largest single contiguous free range across all blocks of that category (`largestSuballocFree`). `liveBufs`/`liveBufMem` are buffers that currently own a host handle; `bufCreatesTotal` is cumulative creates since process start. `flushBufs`/`flushBuf` are the per-thread readback buffers.
+- `sampleOverflow` counts frame intervals that did not fit in the 2048-sample ring. It is a sampling overflow, not a dropped frame.
+- `fencePoll*` are zero-timeout fence checks. `fenceTimed*` are fence checks with a non-zero timeout, including their wall time. `fenceBlock*` is `WaitAllIndefinitely`. `fenceTimeouts` counts the internal 100 ms `Result.Timeout` iterations of that wait loop, not final failures: the loop keeps waiting until the fences are signaled or a real error occurs.
+- `readbackAvg`/`readbackMax` are the CPU-side wall time of a readback call, including any fence wait — not pure GPU copy time.
+
 ### GPU line
 
 ```text
