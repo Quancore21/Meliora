@@ -20,6 +20,10 @@ namespace Ryujinx.Graphics.Gpu
         private const int NsToTicksFractionNumerator = 384;
         private const int NsToTicksFractionDenominator = 625;
 
+        // Meliora: all live process memories, used by the telemetry snapshot. Guarded by
+        // its own lock because registration and unregistration happen on the guest side.
+        private readonly List<PhysicalMemory> _melioraPhysicalMemories = new();
+
         /// <summary>
         /// Event signaled when the host emulation context is ready to be used by the gpu context.
         /// </summary>
@@ -194,6 +198,11 @@ namespace Ryujinx.Graphics.Gpu
                 throw new ArgumentException("The PID was already registered", nameof(pid));
             }
 
+            lock (_melioraPhysicalMemories)
+            {
+                _melioraPhysicalMemories.Add(physicalMemory);
+            }
+
             physicalMemory.ShaderCache.ShaderCacheStateChanged += ShaderCacheStateUpdate;
         }
 
@@ -205,9 +214,59 @@ namespace Ryujinx.Graphics.Gpu
         {
             if (PhysicalMemoryRegistry.TryRemove(pid, out var physicalMemory))
             {
+                lock (_melioraPhysicalMemories)
+                {
+                    _melioraPhysicalMemories.Remove(physicalMemory);
+                }
+
                 physicalMemory.ShaderCache.ShaderCacheStateChanged -= ShaderCacheStateUpdate;
                 physicalMemory.Dispose();
             }
+        }
+
+        /// <summary>
+        /// Meliora: returns the logical buffer-cache and shader-cache sizes for the detail
+        /// log. Must be called on the GPU main thread, which owns these caches.
+        /// </summary>
+        public void GetMelioraGpuSnapshot(
+            out int bufferEntries,
+            out long bufferBytes,
+            out int multiRangeEntries,
+            out int graphicsPrograms,
+            out int computePrograms)
+        {
+            int entries = 0;
+            long bytes = 0;
+            int multiRange = 0;
+            int graphics = 0;
+            int compute = 0;
+
+            lock (_melioraPhysicalMemories)
+            {
+                for (int i = 0; i < _melioraPhysicalMemories.Count; i++)
+                {
+                    PhysicalMemory physicalMemory = _melioraPhysicalMemories[i];
+
+                    physicalMemory.BufferCache.GetMemorySnapshot(
+                        out int bufferCount,
+                        out ulong bufferSize,
+                        out int multiRangeCount);
+
+                    physicalMemory.ShaderCache.GetProgramCounts(out int graphicsCount, out int computeCount);
+
+                    entries += bufferCount;
+                    bytes += (long)bufferSize;
+                    multiRange += multiRangeCount;
+                    graphics += graphicsCount;
+                    compute += computeCount;
+                }
+            }
+
+            bufferEntries = entries;
+            bufferBytes = bytes;
+            multiRangeEntries = multiRange;
+            graphicsPrograms = graphics;
+            computePrograms = compute;
         }
 
         /// <summary>

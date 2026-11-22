@@ -73,6 +73,20 @@ namespace Ryujinx.Graphics.Gpu.Memory
         }
 
         /// <summary>
+        /// Meliora: gets the number of live buffer-cache entries and their total size.
+        /// Called on the GPU main thread for the periodic telemetry report.
+        /// </summary>
+        public void GetMemorySnapshot(out int bufferCount, out ulong bufferBytes, out int multiRangeBufferCount)
+        {
+            lock (_buffers)
+            {
+                _buffers.GetSizeStats(out bufferCount, out bufferBytes);
+            }
+
+            multiRangeBufferCount = _multiRangeBuffers.Count;
+        }
+
+        /// <summary>
         /// Handles removal of buffers written to a memory region being unmapped.
         /// </summary>
         /// <param name="sender">Sender object</param>

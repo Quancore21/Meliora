@@ -78,6 +78,9 @@ bool BreakTestJITScript() {
         "ret");
 }
 
+// Meliora: asks the emulator core to emit its next memory and performance detail line.
+void meliora_telemetry_request_flush(long long texCacheBytes);
+
 #ifdef __cplusplus
 }
 #endif

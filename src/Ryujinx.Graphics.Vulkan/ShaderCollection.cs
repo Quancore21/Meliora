@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Common.Logging;
 using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL;
@@ -5,6 +6,7 @@ using Silk.NET.Vulkan;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -580,6 +582,25 @@ namespace Ryujinx.Graphics.Vulkan
 
         public ProgramLinkStatus CheckProgramLink(bool blocking)
         {
+            if (!blocking)
+            {
+                MelioraTelemetry.AddProgramLinkPoll();
+
+                return CheckProgramLinkImpl(false);
+            }
+
+            long melioraStart = Stopwatch.GetTimestamp();
+            ProgramLinkStatus status = CheckProgramLinkImpl(true);
+
+            MelioraTelemetry.AddProgramLink(
+                Stopwatch.GetTimestamp() - melioraStart,
+                status == ProgramLinkStatus.Incomplete);
+
+            return status;
+        }
+
+        private ProgramLinkStatus CheckProgramLinkImpl(bool blocking)
+        {
             if (LinkStatus == ProgramLinkStatus.Incomplete)
             {
                 ProgramLinkStatus resultStatus = ProgramLinkStatus.Success;
@@ -668,12 +689,16 @@ namespace Ryujinx.Graphics.Vulkan
         {
             if (_graphicsPipelineCache == null)
             {
+                MelioraTelemetry.AddPipelineCacheNull();
+
                 pipeline = default;
                 return false;
             }
 
             if (!_graphicsPipelineCache.TryGetValue(ref key, out pipeline))
             {
+                MelioraTelemetry.AddPipelineLookupMiss();
+
                 if (_firstBackgroundUse)
                 {
                     Logger.Warning?.Print(LogClass.Gpu, "Background pipeline compile missed on draw - incorrect pipeline state?");

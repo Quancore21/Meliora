@@ -2,6 +2,7 @@ using CommandLine;
 using LibHac.Tools.FsSystem;
 using Ryujinx.Audio.Backends.SDL2;
 using Ryujinx.Audio.Backends.Apple;
+using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Configuration.Hid;
 using Ryujinx.Common.Configuration.Hid.Controller;
@@ -800,6 +801,14 @@ namespace Ryujinx.Headless.SDL2
         public static long MelioraTexCacheBytes()
         {
             return MemoryGovernor.LastTextureCacheSize;
+        }
+
+        [UnmanagedCallersOnly(EntryPoint = "meliora_telemetry_request_flush")]
+        public static void MelioraTelemetryRequestFlush(long texCacheBytes)
+        {
+            // Runs on the app's timer thread. It only publishes the request; the render
+            // threads take the actual snapshots and a background thread formats the line.
+            MelioraTelemetry.RequestFlush(texCacheBytes);
         }
 
         [UnmanagedCallersOnly(EntryPoint = "meliora_save_caches")]

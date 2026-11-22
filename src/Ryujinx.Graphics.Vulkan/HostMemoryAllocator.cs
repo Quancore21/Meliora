@@ -139,6 +139,24 @@ namespace Ryujinx.Graphics.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Meliora: gets the number and total size of imported host-memory mappings.
+        /// Called on the backend thread only.
+        /// </summary>
+        public void GetMemoryStats(out int count, out ulong bytes)
+        {
+            lock (_lock)
+            {
+                count = _allocations.Count;
+                bytes = 0;
+
+                for (int i = 0; i < _allocations.Count; i++)
+                {
+                    bytes += _allocations[i].Size;
+                }
+            }
+        }
+
         public (Auto<MemoryAllocation>, ulong) GetExistingAllocation(IntPtr pointer, ulong size)
         {
             lock (_lock)

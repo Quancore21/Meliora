@@ -134,6 +134,11 @@ namespace Ryujinx.Graphics.Gpu.Shader
         private readonly Dictionary<IdTable, ShaderSpecializationList> _shaderPrograms;
 
         /// <summary>
+        /// Number of unique program state combinations in the cache.
+        /// </summary>
+        public int Count => _shaderPrograms.Count;
+
+        /// <summary>
         /// Creates a new graphics shader cache hash table.
         /// </summary>
         public ShaderCacheHashTable()

@@ -12,6 +12,11 @@ namespace Ryujinx.Graphics.Gpu.Shader
         private readonly List<CachedShaderProgram> _shaderPrograms;
 
         /// <summary>
+        /// Number of programs in the cache.
+        /// </summary>
+        public int Count => _shaderPrograms.Count;
+
+        /// <summary>
         /// Creates a new compute shader cache hash table.
         /// </summary>
         public ComputeShaderCacheHashTable()

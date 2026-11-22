@@ -1,6 +1,8 @@
+using Ryujinx.Common;
 using Ryujinx.Graphics.Gpu;
 using Ryujinx.HLE.HOS.Services.Nv.NvDrvServices.NvHostCtrl;
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Ryujinx.HLE.HOS.Services.Nv.Types
@@ -32,7 +34,13 @@ namespace Ryujinx.HLE.HOS.Services.Nv.Types
         {
             if (IsValid())
             {
-                return gpuContext.Synchronization.WaitOnSyncpoint(Id, Value, timeout);
+                long melioraStart = Stopwatch.GetTimestamp();
+
+                bool timedOut = gpuContext.Synchronization.WaitOnSyncpoint(Id, Value, timeout);
+
+                MelioraTelemetry.AddCpuWait(Stopwatch.GetTimestamp() - melioraStart, timedOut);
+
+                return timedOut;
             }
 
             return false;

@@ -227,6 +227,10 @@ final class MelioraGovernor {
 
         melioraLog("[Meliora] mem footprint=\(footprint / 1_048_576)MB minAvail=\(worstAvailable)MB texCache=\(texCache / 1_048_576)MiB thermal=\(thermal) lowPower=\(lowPower) fps=\(fps) avgFps=\(String(format: "%.1f", avgFps)) minFps=\(String(format: "%.1f", minFps))")
 
+        // Ask the core for the memory and performance breakdown. The request is picked up
+        // on the render threads; the heavy formatting happens on a background thread.
+        SN_meliora_telemetry_request_flush(texCache)
+
         // Start a new 10-second window.
         fpsSum = 0
         fpsMin = Double.greatestFiniteMagnitude

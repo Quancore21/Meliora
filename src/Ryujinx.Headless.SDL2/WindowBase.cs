@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Configuration.Hid;
 using Ryujinx.Common.Logging;
@@ -78,6 +79,7 @@ namespace Ryujinx.Headless.SDL2
         public ManualResetEvent _gpuDoneEvent;
 
         private long _ticks;
+        private long _lastPresentTimestamp;
         public bool _isActive;
         private bool _isStopped;
         private uint _windowId;
@@ -298,10 +300,14 @@ namespace Ryujinx.Headless.SDL2
 
             Device.Gpu.Renderer.RunLoop(() =>
             {
+                Span<MelioraGuestMemoryRegion> melioraGuestRegions = stackalloc MelioraGuestMemoryRegion[4];
+
                 // Meliora: new emulation session — give the adaptive controller a clean
                 // slate so warmup and the scale ceiling belong to this game, not to a
                 // previous one started from the same app process.
                 AdaptivePerformance.ResetSession();
+                MelioraTelemetry.ResetSession();
+                _lastPresentTimestamp = 0;
 
                 Device.Gpu.SetGpuThread();
                 Device.Gpu.InitializeShaderCache(_gpuCancellationTokenSource.Token);
@@ -332,12 +338,23 @@ namespace Ryujinx.Headless.SDL2
 
                         fifoBusyTicks = Stopwatch.GetTimestamp() - fifoStart;
 
+                        MelioraTelemetry.AddCpuFrame(fifoBusyTicks);
+
                         Device.Statistics.RecordFifoEnd();
                     }
 
                     while (Device.ConsumeFrameAvailable())
                     {
+                        long presentStart = Stopwatch.GetTimestamp();
+
                         Device.PresentFrame(SwapBuffers);
+
+                        long presentEnd = Stopwatch.GetTimestamp();
+                        long intervalTicks = _lastPresentTimestamp != 0 ? presentEnd - _lastPresentTimestamp : 0;
+
+                        _lastPresentTimestamp = presentEnd;
+
+                        MelioraTelemetry.AddPresent(presentEnd - presentStart, intervalTicks);
 
                         presented++;
 
@@ -356,6 +373,30 @@ namespace Ryujinx.Headless.SDL2
                     // Meliora: the adaptive engine watches every iteration to decide
                     // whether the render scale should follow the load.
                     AdaptivePerformance.OnIterationEnd(fifoBusyTicks, presented);
+
+                    // Meliora: the detail report samples guest memory and the GPU caches
+                    // here, because this thread owns them. The Vulkan half is sampled by
+                    // the backend thread inside VulkanRenderer.PreFrame.
+                    if (MelioraTelemetry.IsHostSnapshotRequested)
+                    {
+                        Device.System.GetMelioraGuestMemory(melioraGuestRegions);
+
+                        Device.Gpu.GetMelioraGpuSnapshot(
+                            out int bufferEntries,
+                            out long bufferBytes,
+                            out int multiRangeEntries,
+                            out int graphicsPrograms,
+                            out int computePrograms);
+
+                        MelioraTelemetry.CaptureHostSnapshot(
+                            melioraGuestRegions,
+                            bufferEntries,
+                            bufferBytes,
+                            multiRangeEntries,
+                            graphicsPrograms,
+                            computePrograms,
+                            MemoryGovernor.AvailableBytes);
+                    }
 
                     if (_ticks >= MelioraFramePacing.TicksPerFrame)
                     {

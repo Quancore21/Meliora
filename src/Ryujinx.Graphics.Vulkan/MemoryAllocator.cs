@@ -109,6 +109,35 @@ namespace Ryujinx.Graphics.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Meliora: sums the committed blocks and their used ranges. Called on the
+        /// backend thread only, so the read lock never waits for another thread.
+        /// </summary>
+        public void GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes)
+        {
+            blockCount = 0;
+            blockBytes = 0;
+            usedBytes = 0;
+
+            _lock.EnterReadLock();
+
+            try
+            {
+                for (int i = 0; i < _blockLists.Count; i++)
+                {
+                    _blockLists[i].GetMemoryStats(out int blocks, out ulong total, out ulong used);
+
+                    blockCount += blocks;
+                    blockBytes += total;
+                    usedBytes += used;
+                }
+            }
+            finally
+            {
+                _lock.ExitReadLock();
+            }
+        }
+
         public void Dispose()
         {
             for (int i = 0; i < _blockLists.Count; i++)

@@ -66,6 +66,7 @@ Meliora-specific exports:
 | `meliora_memory_report(availableBytes)` | Swift → core | Reports `os_proc_available_memory()` so the caches can shrink. |
 | `meliora_memory_trim()` | Swift → core | Requests an emergency trim (also triggered by an iOS memory warning). |
 | `meliora_tex_cache_bytes()` | core → Swift | Returns the last known texture-cache size for telemetry. |
+| `meliora_telemetry_request_flush(texCacheBytes)` | Swift → core | Requests the next `[Meliora] mem-detail` / `perf-detail` report. The render threads snapshot the state and a background thread formats it. |
 | `meliora_save_caches(force)` | Swift → core | Queues a pipeline-cache save; the render thread performs it safely. |
 
 General lifecycle exports (`pause_emulation`, `stop_emulation`, `get_game_info`, controller functions and so on) follow the same pattern. The bridge deliberately avoids passing Swift objects into the core; values are copied into native structs and strings are marshalled explicitly.

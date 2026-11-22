@@ -136,6 +136,21 @@ namespace Ryujinx.Graphics.Vulkan
                 return false;
             }
 
+            /// <summary>
+            /// Gets the number of bytes that are not currently suballocated.
+            /// </summary>
+            public ulong GetFreeBytes()
+            {
+                ulong freeBytes = 0;
+
+                for (int i = 0; i < _freeRanges.Count; i++)
+                {
+                    freeBytes += _freeRanges[i].Size;
+                }
+
+                return freeBytes;
+            }
+
             public int CompareTo(Block other)
             {
                 return Size.CompareTo(other.Size);
@@ -153,6 +168,8 @@ namespace Ryujinx.Graphics.Vulkan
                 {
                     api.FreeMemory(device, Memory, null);
                     Memory = default;
+
+                    MelioraTelemetry.AddVkBlockFree((long)Size);
                 }
             }
         }
@@ -221,6 +238,8 @@ namespace Ryujinx.Graphics.Vulkan
             };
 
             _api.AllocateMemory(_device, in memoryAllocateInfo, null, out var deviceMemory).ThrowOnError();
+
+            MelioraTelemetry.AddVkBlockAlloc((long)blockAlignedSize);
 
             IntPtr hostPointer = IntPtr.Zero;
 
@@ -296,6 +315,35 @@ namespace Ryujinx.Graphics.Vulkan
             finally
             {
                 _lock.ExitWriteLock();
+            }
+        }
+
+        /// <summary>
+        /// Meliora: sums the committed blocks and their suballocated bytes. Called on
+        /// the backend thread only.
+        /// </summary>
+        public void GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes)
+        {
+            blockCount = 0;
+            blockBytes = 0;
+            usedBytes = 0;
+
+            _lock.EnterReadLock();
+
+            try
+            {
+                for (int i = 0; i < _blocks.Count; i++)
+                {
+                    Block block = _blocks[i];
+
+                    blockCount++;
+                    blockBytes += block.Size;
+                    usedBytes += block.Size - block.GetFreeBytes();
+                }
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
 

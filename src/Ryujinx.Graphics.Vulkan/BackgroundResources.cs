@@ -50,6 +50,14 @@ namespace Ryujinx.Graphics.Vulkan
             return _flushBuffer;
         }
 
+        /// <summary>
+        /// Meliora: current size of this thread's readback buffer, zero before first use.
+        /// </summary>
+        public int GetFlushBufferSize()
+        {
+            return _flushBuffer?.BufferSize ?? 0;
+        }
+
         public void Dispose()
         {
             _pool?.Dispose();
@@ -104,6 +112,29 @@ namespace Ryujinx.Graphics.Vulkan
 
                 return resource;
             }
+        }
+
+        /// <summary>
+        /// Meliora: largest readback buffer among the per-thread background resources.
+        /// </summary>
+        public int GetFlushBufferSize()
+        {
+            int size = 0;
+
+            lock (_resources)
+            {
+                foreach (KeyValuePair<Thread, BackgroundResource> tuple in _resources)
+                {
+                    int resourceSize = tuple.Value.GetFlushBufferSize();
+
+                    if (resourceSize > size)
+                    {
+                        size = resourceSize;
+                    }
+                }
+            }
+
+            return size;
         }
 
         public void Dispose()

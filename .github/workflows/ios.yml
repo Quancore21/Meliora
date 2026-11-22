@@ -109,7 +109,7 @@ jobs:
           lipo -info "$SRC" | tee /dev/stderr | grep -q arm64 || { echo "::error::core is not arm64"; exit 1; }
           [ "$(stat -f%z "$SRC")" -gt 10000000 ] || { echo "::error::core dylib is suspiciously small"; exit 1; }
           # The app calls these Meliora functions; make sure NativeAOT kept them.
-          for sym in meliora_memory_configure meliora_memory_report meliora_memory_trim meliora_tex_cache_bytes meliora_save_caches; do
+          for sym in meliora_memory_configure meliora_memory_report meliora_memory_trim meliora_tex_cache_bytes meliora_save_caches meliora_telemetry_request_flush; do
             nm -gU "$SRC" | grep -q " _${sym}\$" || { echo "::error::core does not export $sym"; exit 1; }
           done
           # Copy (not move) so Xcode's later `mv` from publish/ still finds its file.

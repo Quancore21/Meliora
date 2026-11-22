@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Graphics.GAL;
 using System;
 
@@ -8,6 +9,11 @@ namespace Ryujinx.Graphics.Vulkan
         private readonly VulkanRenderer _gd;
 
         private BufferHolder _flushStorage;
+
+        /// <summary>
+        /// Current size of the persistent readback buffer, or zero before the first use.
+        /// </summary>
+        public int BufferSize => _flushStorage?.Size ?? 0;
 
         public PersistentFlushBuffer(VulkanRenderer gd)
         {
@@ -31,6 +37,8 @@ namespace Ryujinx.Graphics.Vulkan
 
         public Span<byte> GetBufferData(CommandBufferPool cbp, BufferHolder buffer, int offset, int size)
         {
+            MelioraTelemetry.AddReadback(size);
+
             var flushStorage = ResizeIfNeeded(size);
             Auto<DisposableBuffer> srcBuffer;
 
@@ -57,6 +65,8 @@ namespace Ryujinx.Graphics.Vulkan
 
         public Span<byte> GetTextureData(CommandBufferPool cbp, TextureView view, int size)
         {
+            MelioraTelemetry.AddReadback(size);
+
             TextureCreateInfo info = view.Info;
 
             var flushStorage = ResizeIfNeeded(size);
@@ -75,6 +85,8 @@ namespace Ryujinx.Graphics.Vulkan
 
         public Span<byte> GetTextureData(CommandBufferPool cbp, TextureView view, int size, int layer, int level)
         {
+            MelioraTelemetry.AddReadback(size);
+
             var flushStorage = ResizeIfNeeded(size);
 
             using (var cbs = cbp.Rent())

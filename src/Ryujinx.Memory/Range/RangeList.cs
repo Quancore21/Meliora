@@ -42,6 +42,21 @@ namespace Ryujinx.Memory.Range
         public int Count { get; protected set; }
 
         /// <summary>
+        /// Gets the number of entries and the sum of their sizes.
+        /// Iterates the backing array directly so a diagnostic snapshot does not allocate.
+        /// </summary>
+        public void GetSizeStats(out int count, out ulong totalSize)
+        {
+            count = Count;
+            totalSize = 0;
+
+            for (int i = 0; i < Count; i++)
+            {
+                totalSize += _items[i].Value.Size;
+            }
+        }
+
+        /// <summary>
         /// Creates a new range list.
         /// </summary>
         /// <param name="backingInitialSize">The initial size of the backing array</param>

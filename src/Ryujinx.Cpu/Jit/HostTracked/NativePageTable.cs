@@ -213,7 +213,15 @@ namespace Ryujinx.Cpu.Jit.HostTracked
             }
             else
             {
-                throw new InvalidMemoryRegionException();
+                // Meliora: the six values are stored as-is; the message is only formatted
+                // later, when the top-level handler logs the exception.
+                throw new InvalidMemoryRegionException(
+                    address,
+                    address * (PageSize / sizeof(ulong)),
+                    size,
+                    write,
+                    _nativePageTable.Size,
+                    _hostPageSize);
             }
         }
 

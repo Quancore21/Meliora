@@ -31,7 +31,7 @@ shasum -a 256 "$D/libMoltenVK.dylib" "$D/libavcodec.dylib" "$D/libavutil.dylib" 
 
 Run this from the repository root and commit the updated file together with the new library.
 
-The workflow fails if a pointer file or a mismatched binary is committed. It also checks that the core exports the Meliora C entry points (`meliora_memory_configure`, `meliora_memory_report`, `meliora_memory_trim`, `meliora_tex_cache_bytes`, `meliora_save_caches`) and that both IPAs have the expected bundle ID, architectures, libraries and entitlements.
+The workflow fails if a pointer file or a mismatched binary is committed. It also checks that the core exports the Meliora C entry points (`meliora_memory_configure`, `meliora_memory_report`, `meliora_memory_trim`, `meliora_tex_cache_bytes`, `meliora_save_caches`, `meliora_telemetry_request_flush`) and that both IPAs have the expected bundle ID, architectures, libraries and entitlements.
 
 ## Validating the C# core on Windows
 

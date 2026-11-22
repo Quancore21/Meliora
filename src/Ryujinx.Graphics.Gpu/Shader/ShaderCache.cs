@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL;
@@ -10,6 +11,7 @@ using Ryujinx.Graphics.Shader;
 using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 
@@ -109,6 +111,15 @@ namespace Ryujinx.Graphics.Gpu.Shader
             {
                 _cacheWriter = new BackgroundDiskCacheWriter(context, _diskCacheHostStorage);
             }
+        }
+
+        /// <summary>
+        /// Meliora: gets the number of cached graphics and compute programs.
+        /// </summary>
+        public void GetProgramCounts(out int graphics, out int compute)
+        {
+            graphics = _graphicsShaderCache.Count;
+            compute = _computeShaderCache.Count;
         }
 
         /// <summary>
@@ -729,6 +740,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
             byte[] codeB,
             bool asCompute)
         {
+            long melioraStart = Stopwatch.GetTimestamp();
+
             ulong cb1DataAddress = channel.BufferManager.GetGraphicsUniformBufferAddress(0, 1);
 
             var memoryManager = channel.MemoryManager;
@@ -755,6 +768,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
             CachedShaderStage vertexAStage = new(null, codeA, cb1DataA);
             CachedShaderStage vertexBStage = new(program.Info, codeB, cb1DataB);
 
+            MelioraTelemetry.AddShaderTranslate(Stopwatch.GetTimestamp() - melioraStart);
+
             return new TranslatedShaderVertexPair(vertexAStage, vertexBStage, program);
         }
 
@@ -769,6 +784,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
         /// <returns>Compiled graphics shader code</returns>
         private static TranslatedShader TranslateShader(ShaderDumper dumper, GpuChannel channel, TranslatorContext context, byte[] code, bool asCompute)
         {
+            long melioraStart = Stopwatch.GetTimestamp();
+
             var memoryManager = channel.MemoryManager;
 
             ulong cb1DataAddress = context.Stage == ShaderStage.Compute
@@ -782,6 +799,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
             ShaderProgram program = context.Translate(asCompute);
 
             paths.Prepend(program);
+
+            MelioraTelemetry.AddShaderTranslate(Stopwatch.GetTimestamp() - melioraStart);
 
             return new TranslatedShader(new CachedShaderStage(program.Info, code, cb1Data), program);
         }

@@ -1,3 +1,4 @@
+using Ryujinx.Common;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL;
@@ -10,6 +11,7 @@ using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Vulkan.Extensions.KHR;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Format = Ryujinx.Graphics.GAL.Format;
 using PrimitiveTopology = Ryujinx.Graphics.GAL.PrimitiveTopology;
@@ -546,19 +548,35 @@ namespace Ryujinx.Graphics.Vulkan
 
         public IProgram CreateProgram(ShaderSource[] sources, ShaderInfo info)
         {
+            long melioraStart = Stopwatch.GetTimestamp();
+
             bool isCompute = sources.Length == 1 && sources[0].Stage == ShaderStage.Compute;
+
+            IProgram program;
 
             if (info.State.HasValue || isCompute)
             {
-                return new ShaderCollection(this, _device, sources, info.ResourceLayout, info.State ?? default, info.FromCache);
+                program = new ShaderCollection(this, _device, sources, info.ResourceLayout, info.State ?? default, info.FromCache);
+            }
+            else
+            {
+                program = new ShaderCollection(this, _device, sources, info.ResourceLayout);
             }
 
-            return new ShaderCollection(this, _device, sources, info.ResourceLayout);
+            MelioraTelemetry.AddProgramCreate(Stopwatch.GetTimestamp() - melioraStart);
+
+            return program;
         }
 
         internal ShaderCollection CreateProgramWithMinimalLayout(ShaderSource[] sources, ResourceLayout resourceLayout, SpecDescription[] specDescription = null)
         {
-            return new ShaderCollection(this, _device, sources, resourceLayout, specDescription, isMinimal: true);
+            long melioraStart = Stopwatch.GetTimestamp();
+
+            ShaderCollection program = new(this, _device, sources, resourceLayout, specDescription, isMinimal: true);
+
+            MelioraTelemetry.AddProgramCreate(Stopwatch.GetTimestamp() - melioraStart);
+
+            return program;
         }
 
         public ISampler CreateSampler(SamplerCreateInfo info)
@@ -960,6 +978,33 @@ namespace Ryujinx.Graphics.Vulkan
         public void PreFrame()
         {
             SyncManager.Cleanup();
+
+            // Meliora: publish a report whose writers have drained, then sample the physical
+            // allocators here, on the thread that owns them.
+            MelioraTelemetry.TryPublishFrozenSlot();
+
+            if (!MelioraTelemetry.IsVulkanSnapshotRequested)
+            {
+                return;
+            }
+
+            MemoryAllocator.GetMemoryStats(out int blockCount, out ulong blockBytes, out ulong usedBytes);
+            HostMemoryAllocator.GetMemoryStats(out int hostImportCount, out ulong hostImportBytes);
+
+            MelioraVulkanSnapshot snapshot = new()
+            {
+                BlockCount = blockCount,
+                BlockBytes = (long)blockBytes,
+                UsedBytes = (long)usedBytes,
+                HostImportCount = hostImportCount,
+                HostImportBytes = (long)hostImportBytes,
+                LiveBufferCount = BufferManager.LiveBufferCount,
+                LiveBufferBytes = BufferManager.LiveBufferBytes,
+                BufferCreatesTotal = BufferManager.BufferCount,
+                FlushBufferBytes = BackgroundResources.GetFlushBufferSize(),
+            };
+
+            MelioraTelemetry.CaptureVulkanSnapshot(snapshot);
         }
 
         public ICounterEvent ReportCounter(CounterType type, EventHandler<ulong> resultHandler, float divisor, bool hostReserved)

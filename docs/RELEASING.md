@@ -19,7 +19,7 @@ The `Build iOS IPA` workflow (`.github/workflows/ios.yml`) runs on pushes to `ma
 
 1. Refuses Git LFS pointer files and verifies the prebuilt MoltenVK/FFmpeg checksums in `distribution/ios/prebuilt.sha256`.
 2. Builds the emulator core with .NET 8 NativeAOT for `ios-arm64`.
-3. Checks that the core is arm64, is not suspiciously small, and exports the Meliora C entry points (`meliora_memory_configure`, `meliora_memory_report`, `meliora_memory_trim`, `meliora_tex_cache_bytes`, `meliora_save_caches`).
+3. Checks that the core is arm64, is not suspiciously small, and exports the Meliora C entry points (`meliora_memory_configure`, `meliora_memory_report`, `meliora_memory_trim`, `meliora_tex_cache_bytes`, `meliora_save_caches`, `meliora_telemetry_request_flush`).
 4. Builds the Xcode app unsigned, with Swift packages pinned to `Package.resolved` and the build number set to the workflow run number.
 5. Packages two unsigned IPAs, embeds the entitlements with `ldid`, and verifies bundle ID, architectures, required libraries and entitlements.
 6. Uploads the `meliora-ipa` artifact (30 days) and `build-logs` (14 days), and writes sizes and SHA-256 hashes to the job summary.

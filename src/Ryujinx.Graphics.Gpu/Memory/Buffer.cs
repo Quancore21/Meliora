@@ -1,9 +1,11 @@
+using Ryujinx.Common;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Gpu.Synchronization;
 using Ryujinx.Memory.Range;
 using Ryujinx.Memory.Tracking;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -184,6 +186,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// </summary>
         private void ChangeBacking()
         {
+            long melioraStart = Stopwatch.GetTimestamp();
+
             BufferAccess access = BackingState.SwitchAccess(this);
 
             BufferHandle newHandle = _context.Renderer.CreateBuffer((int)Size, access);
@@ -199,6 +203,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
             Handle = newHandle;
 
             _physicalMemory.BufferCache.BufferBackingChanged(this);
+
+            MelioraTelemetry.AddBufferMigration(Stopwatch.GetTimestamp() - melioraStart, (long)Size);
         }
 
         /// <summary>
@@ -638,12 +644,16 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="size">Size in bytes of the range</param>
         private void FlushImpl(BufferHandle handle, ulong address, ulong size)
         {
+            long melioraStart = Stopwatch.GetTimestamp();
+
             int offset = (int)(address - Address);
 
             using PinnedSpan<byte> data = _context.Renderer.GetBufferData(handle, offset, (int)size);
 
             // TODO: When write tracking shaders, they will need to be aware of changes in overlapping buffers.
             _physicalMemory.WriteUntracked(address, CopyFromDependantVirtualBuffers(data.Get(), address, size));
+
+            MelioraTelemetry.AddBufferFlush(Stopwatch.GetTimestamp() - melioraStart, (long)size);
         }
 
         /// <summary>

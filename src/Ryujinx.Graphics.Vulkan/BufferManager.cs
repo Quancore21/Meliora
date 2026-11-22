@@ -4,6 +4,7 @@ using Silk.NET.Vulkan;
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using VkBuffer = Silk.NET.Vulkan.Buffer;
 using VkFormat = Silk.NET.Vulkan.Format;
 
@@ -79,7 +80,24 @@ namespace Ryujinx.Graphics.Vulkan
 
         private readonly IdList<BufferHolder> _buffers;
 
+        private int _liveBufferCount;
+        private long _liveBufferBytes;
+
+        /// <summary>
+        /// Number of host buffer creations since the process started. This is a
+        /// cumulative counter, not the number of live buffers.
+        /// </summary>
         public int BufferCount { get; private set; }
+
+        /// <summary>
+        /// Number of buffers that currently own a live host handle.
+        /// </summary>
+        public int LiveBufferCount => Volatile.Read(ref _liveBufferCount);
+
+        /// <summary>
+        /// Total size of the live host buffers.
+        /// </summary>
+        public long LiveBufferBytes => Volatile.Read(ref _liveBufferBytes);
 
         public StagingBuffer StagingBuffer { get; }
 
@@ -129,6 +147,8 @@ namespace Ryujinx.Graphics.Vulkan
             BufferCount++;
 
             ulong handle64 = (uint)_buffers.Add(holder);
+
+            RegisterBuffer(holder);
 
             return Unsafe.As<ulong, BufferHandle>(ref handle64);
         }
@@ -230,6 +250,8 @@ namespace Ryujinx.Graphics.Vulkan
 
             ulong handle64 = (uint)_buffers.Add(holder);
 
+            RegisterBuffer(holder);
+
             return Unsafe.As<ulong, BufferHandle>(ref handle64);
         }
 
@@ -265,6 +287,8 @@ namespace Ryujinx.Graphics.Vulkan
             BufferCount++;
 
             ulong handle64 = (uint)_buffers.Add(holder);
+
+            RegisterBuffer(holder);
 
             return Unsafe.As<ulong, BufferHandle>(ref handle64);
         }
@@ -648,7 +672,16 @@ namespace Ryujinx.Graphics.Vulkan
             {
                 holder.Dispose();
                 _buffers.Remove((int)Unsafe.As<BufferHandle, ulong>(ref handle));
+
+                Interlocked.Decrement(ref _liveBufferCount);
+                Interlocked.Add(ref _liveBufferBytes, -holder.Size);
             }
+        }
+
+        private void RegisterBuffer(BufferHolder holder)
+        {
+            Interlocked.Increment(ref _liveBufferCount);
+            Interlocked.Add(ref _liveBufferBytes, holder.Size);
         }
 
         private bool TryGetBuffer(BufferHandle handle, out BufferHolder holder)
@@ -668,6 +701,9 @@ namespace Ryujinx.Graphics.Vulkan
                 }
 
                 _buffers.Clear();
+
+                Volatile.Write(ref _liveBufferCount, 0);
+                Volatile.Write(ref _liveBufferBytes, 0);
             }
         }
 

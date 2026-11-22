@@ -4,6 +4,7 @@ using LibHac.Fs;
 using LibHac.Fs.Shim;
 using LibHac.FsSystem;
 using LibHac.Tools.FsSystem;
+using Ryujinx.Common;
 using Ryujinx.Cpu;
 using Ryujinx.HLE.FileSystem;
 using Ryujinx.HLE.HOS.Kernel;
@@ -321,6 +322,27 @@ namespace Ryujinx.HLE.HOS
                 SignalDisplayResolutionChange();
 
                 Device.Configuration.RefreshInputConfig?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Meliora: fills one entry per emulated memory region with its total and free size.
+        /// The order matches the <see cref="MemoryRegion"/> enum (application, applet,
+        /// service and NV services). Must be called from the render loop; it takes the
+        /// page-heap locks briefly and is only used when telemetry samples a report.
+        /// </summary>
+        public void GetMelioraGuestMemory(Span<MelioraGuestMemoryRegion> regions)
+        {
+            KMemoryRegionManager[] memoryRegions = KernelContext.MemoryManager.MemoryRegions;
+            ulong pageSize = KPageTableBase.PageSize;
+            int count = Math.Min(regions.Length, memoryRegions.Length);
+
+            for (int i = 0; i < count; i++)
+            {
+                KMemoryRegionManager region = memoryRegions[i];
+                ulong freeBytes = region.GetFreePages() * pageSize;
+
+                regions[i] = new MelioraGuestMemoryRegion(region.Size, freeBytes);
             }
         }
 

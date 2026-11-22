@@ -290,5 +290,8 @@ func SN_meliora_memory_trim()
 @_silgen_name("meliora_tex_cache_bytes")
 func SN_meliora_tex_cache_bytes() -> Int64
 
+@_silgen_name("meliora_telemetry_request_flush")
+func SN_meliora_telemetry_request_flush(_ texCacheBytes: Int64)
+
 @_silgen_name("meliora_save_caches")
 func SN_meliora_save_caches(_ force: Int32)
