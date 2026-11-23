@@ -697,6 +697,21 @@ namespace Ryujinx.HLE.HOS.Services.Hid
             return ResultCode.Success;
         }
 
+        [CommandCmif(92)] // 18.0.0+
+        // SetGestureOutputRanges(pid, ushort Unknown0)
+        //   Documented by name only. The input is a single u16 (gesture output range mask)
+        //   plus the process id; there is no output. Returning Success matches the firmware,
+        //   which ignores the mask when gesture output is not supported.
+        public ResultCode SetGestureOutputRanges(ServiceCtx context)
+        {
+            ulong pid = context.Request.HandleDesc.PId;
+            ushort unknown0 = context.RequestData.ReadUInt16();
+
+            Logger.Stub?.PrintStub(LogClass.ServiceHid, new { pid, unknown0 });
+
+            return ResultCode.Success;
+        }
+
         [CommandCmif(100)]
         // SetSupportedNpadStyleSet(pid, nn::applet::AppletResourceUserId, nn::hid::NpadStyleTag)
         public ResultCode SetSupportedNpadStyleSet(ServiceCtx context)
