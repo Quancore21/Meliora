@@ -524,6 +524,11 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
         public void FlushThreadedCommands()
         {
+            // The backend thread may be waiting for a background compilation that outlived
+            // emulation. Wake it before waiting for the command queue to drain, otherwise
+            // shutdown would block forever in the spin below.
+            Programs.Stop();
+
             SpinWait wait = new();
 
             while (Volatile.Read(ref _commandCount) > 0)
@@ -541,6 +546,10 @@ namespace Ryujinx.Graphics.GAL.Multithreading
             // Stop the GPU thread.
             _running = false;
             _galWorkAvailable.Set();
+
+            // Wake a backend thread that is waiting for a program compilation, and wait for
+            // an already running ProcessQueue() before the backend renderer is released.
+            Programs.Stop();
 
             if (_gpuThread != null && _gpuThread.IsAlive)
             {

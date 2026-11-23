@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace Ryujinx.Graphics.Vulkan
 {
-    class ShaderCollection : IProgram
+    class ShaderCollection : IProgram, IProgramCompilationNotifier
     {
         private readonly PipelineShaderStageCreateInfo[] _infos;
         private readonly Shader[] _shaders;
@@ -66,6 +66,8 @@ namespace Ryujinx.Graphics.Vulkan
         private readonly Task _compileTask;
         private bool _firstBackgroundUse;
 
+        public event Action CompilationCompleted;
+
         public ShaderCollection(
             VulkanRenderer gd,
             Device device,
@@ -73,6 +75,18 @@ namespace Ryujinx.Graphics.Vulkan
             ResourceLayout resourceLayout,
             SpecDescription[] specDescription = null,
             bool isMinimal = false)
+            : this(gd, device, shaders, resourceLayout, specDescription, isMinimal, waitForShaders: true)
+        {
+        }
+
+        private ShaderCollection(
+            VulkanRenderer gd,
+            Device device,
+            ShaderSource[] shaders,
+            ResourceLayout resourceLayout,
+            SpecDescription[] specDescription,
+            bool isMinimal,
+            bool waitForShaders)
         {
             _gd = gd;
             _device = device;
@@ -142,7 +156,7 @@ namespace Ryujinx.Graphics.Vulkan
             // Updating buffer texture bindings using template updates crashes the Adreno driver on Windows.
             UpdateTexturesWithoutTemplate = gd.IsQualcommProprietary && usesBufferTextures;
 
-            _compileTask = Task.CompletedTask;
+            _compileTask = waitForShaders ? WaitForShaderCompilation() : Task.CompletedTask;
             _firstBackgroundUse = false;
         }
 
@@ -152,7 +166,8 @@ namespace Ryujinx.Graphics.Vulkan
             ShaderSource[] sources,
             ResourceLayout resourceLayout,
             ProgramPipelineState state,
-            bool fromCache) : this(gd, device, sources, resourceLayout)
+            bool fromCache)
+            : this(gd, device, sources, resourceLayout, null, false, waitForShaders: false)
         {
             _state = state;
 
@@ -451,19 +466,41 @@ namespace Ryujinx.Graphics.Vulkan
             return (buffer, texture);
         }
 
-        private async Task BackgroundCompilation()
+        private async Task WaitForShaderCompilation()
         {
-            await Task.WhenAll(_shaders.Select(shader => shader.CompileTask));
-
-            if (Array.Exists(_shaders, shader => shader.CompileStatus == ProgramLinkStatus.Failure))
-            {
-                LinkStatus = ProgramLinkStatus.Failure;
-
-                return;
-            }
-
             try
             {
+                await Task.WhenAll(_shaders.Select(shader => shader.CompileTask));
+
+                LinkStatus = Array.Exists(_shaders, shader => shader.CompileStatus != ProgramLinkStatus.Success)
+                    ? ProgramLinkStatus.Failure
+                    : ProgramLinkStatus.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error?.PrintMsg(LogClass.Gpu, $"Shader compilation failed: {e.Message}");
+
+                LinkStatus = ProgramLinkStatus.Failure;
+            }
+            finally
+            {
+                NotifyCompilationCompleted();
+            }
+        }
+
+        private async Task BackgroundCompilation()
+        {
+            try
+            {
+                await Task.WhenAll(_shaders.Select(shader => shader.CompileTask));
+
+                if (Array.Exists(_shaders, shader => shader.CompileStatus == ProgramLinkStatus.Failure))
+                {
+                    LinkStatus = ProgramLinkStatus.Failure;
+
+                    return;
+                }
+
                 if (IsCompute)
                 {
                     CreateBackgroundComputePipeline();
@@ -472,12 +509,30 @@ namespace Ryujinx.Graphics.Vulkan
                 {
                     CreateBackgroundGraphicsPipeline();
                 }
+
+                LinkStatus = ProgramLinkStatus.Success;
             }
-            catch (VulkanException e)
+            catch (Exception e)
             {
                 Logger.Error?.PrintMsg(LogClass.Gpu, $"Background Compilation failed: {e.Message}");
 
                 LinkStatus = ProgramLinkStatus.Failure;
+            }
+            finally
+            {
+                NotifyCompilationCompleted();
+            }
+        }
+
+        private void NotifyCompilationCompleted()
+        {
+            try
+            {
+                CompilationCompleted?.Invoke();
+            }
+            catch (Exception e)
+            {
+                Logger.Error?.PrintMsg(LogClass.Gpu, $"Compilation notification failed: {e.Message}");
             }
         }
 
@@ -630,7 +685,16 @@ namespace Ryujinx.Graphics.Vulkan
                 {
                     if (blocking)
                     {
-                        _compileTask.Wait();
+                        try
+                        {
+                            _compileTask.Wait();
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Error?.PrintMsg(LogClass.Gpu, $"Background Compilation wait failed: {e.Message}");
+
+                            LinkStatus = ProgramLinkStatus.Failure;
+                        }
 
                         if (LinkStatus == ProgramLinkStatus.Failure)
                         {

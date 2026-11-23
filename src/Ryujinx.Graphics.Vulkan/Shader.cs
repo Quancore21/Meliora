@@ -42,39 +42,50 @@ namespace Ryujinx.Graphics.Vulkan
 
             CompileTask = Task.Run(() =>
             {
-                // Meliora: shader module compilation competes with the game for CPU
-                // time; run it at a boosted QoS instead of the scheduler default. The
-                // class is restored afterwards so it cannot leak onto the pool thread.
-                ThreadQoS.RunWithRole(QoSRole.ShaderCompile, () =>
+                try
                 {
-                    byte[] spirv = shaderSource.BinaryCode;
-
-                    if (spirv == null)
+                    // Meliora: shader module compilation competes with the game for CPU
+                    // time; run it at a boosted QoS instead of the scheduler default. The
+                    // class is restored afterwards so it cannot leak onto the pool thread.
+                    ThreadQoS.RunWithRole(QoSRole.ShaderCompile, () =>
                     {
-                        spirv = GlslToSpirv(shaderSource.Code, shaderSource.Stage);
+                        byte[] spirv = shaderSource.BinaryCode;
 
                         if (spirv == null)
                         {
-                            CompileStatus = ProgramLinkStatus.Failure;
+                            spirv = GlslToSpirv(shaderSource.Code, shaderSource.Stage);
 
-                            return;
+                            if (spirv == null)
+                            {
+                                CompileStatus = ProgramLinkStatus.Failure;
+
+                                return;
+                            }
                         }
-                    }
 
-                    fixed (byte* pCode = spirv)
-                    {
-                        var shaderModuleCreateInfo = new ShaderModuleCreateInfo
+                        fixed (byte* pCode = spirv)
                         {
-                            SType = StructureType.ShaderModuleCreateInfo,
-                            CodeSize = (uint)spirv.Length,
-                            PCode = (uint*)pCode,
-                        };
+                            var shaderModuleCreateInfo = new ShaderModuleCreateInfo
+                            {
+                                SType = StructureType.ShaderModuleCreateInfo,
+                                CodeSize = (uint)spirv.Length,
+                                PCode = (uint*)pCode,
+                            };
 
-                        api.CreateShaderModule(device, in shaderModuleCreateInfo, null, out _module).ThrowOnError();
-                    }
+                            api.CreateShaderModule(device, in shaderModuleCreateInfo, null, out _module).ThrowOnError();
+                        }
 
-                    CompileStatus = ProgramLinkStatus.Success;
-                });
+                        CompileStatus = ProgramLinkStatus.Success;
+                    });
+                }
+                catch (Exception e)
+                {
+                    // The compile task must always reach a terminal state. An unhandled
+                    // exception used to leave CompileStatus at Incomplete forever.
+                    CompileStatus = ProgramLinkStatus.Failure;
+
+                    Logger.Error?.PrintMsg(LogClass.Gpu, $"Shader compilation failed: {e.Message}");
+                }
             });
         }
 
@@ -152,7 +163,16 @@ namespace Ryujinx.Graphics.Vulkan
 
         public void WaitForCompile()
         {
-            CompileTask.Wait();
+            try
+            {
+                CompileTask.Wait();
+            }
+            catch (Exception e)
+            {
+                CompileStatus = ProgramLinkStatus.Failure;
+
+                Logger.Error?.PrintMsg(LogClass.Gpu, $"Shader compilation wait failed: {e.Message}");
+            }
         }
 
         public unsafe void Dispose()
