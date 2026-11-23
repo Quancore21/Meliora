@@ -1126,6 +1126,19 @@ namespace Ryujinx.Graphics.Gpu.Image
                 }
             }
 
+            // Meliora: empty data means the host readback failed (for example the texture
+            // was disposed by an emergency trim while the flush was in flight). Do not
+            // write empty or stale contents into guest memory as if it were valid data.
+            if (data.Get().IsEmpty)
+            {
+                data.Dispose();
+
+                Logger.Warning?.Print(LogClass.Gpu,
+                    $"Skipping flush to guest for texture 0x{Info.GpuAddress:X} ({Info.FormatInfo.Format} {Info.Width}x{Info.Height}x{Info.GetDepth()}): host readback returned no data");
+
+                return;
+            }
+
             ConvertFromHostCompatibleFormat(output, data.Get());
 
             data.Dispose();
@@ -1169,6 +1182,19 @@ namespace Ryujinx.Graphics.Gpu.Image
                 {
                     data = HostTexture.GetData(layer, level);
                 }
+            }
+
+            // Meliora: empty data means the host readback failed (for example the texture
+            // was disposed by an emergency trim while the flush was in flight). Do not
+            // write empty or stale contents into guest memory as if it were valid data.
+            if (data.Get().IsEmpty)
+            {
+                data.Dispose();
+
+                Logger.Warning?.Print(LogClass.Gpu,
+                    $"Skipping flush to guest for texture 0x{Info.GpuAddress:X} ({Info.FormatInfo.Format} {Info.Width}x{Info.Height}x{Info.GetDepth()}, layer={layer}, level={level}): host readback returned no data");
+
+                return;
             }
 
             ConvertFromHostCompatibleFormat(output, data.Get(), level, true);

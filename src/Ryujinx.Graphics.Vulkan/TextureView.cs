@@ -611,18 +611,45 @@ namespace Ryujinx.Graphics.Vulkan
             int size = width * height * Info.BytesPerPixel;
             using var bufferHolder = _gd.BufferManager.Create(_gd, size);
 
-            using (var cbs = _gd.CommandBufferPool.Rent())
-            {
-                var buffer = bufferHolder.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
-                var image = GetImage().Get(cbs).Value;
+            // Meliora: same lifetime protection as the flush readback path. The view may be
+            // disposed concurrently, so hold a reference until the copy command completed.
+            Auto<DisposableImage> imageAuto = GetImage();
 
-                CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, 0, 0, x, y, width, height);
+            if (!imageAuto.TryIncrementReferenceCount())
+            {
+                MelioraReadbackGuard.LogBrokenState("GetData",
+                    $"texture view is no longer alive, region {width}x{height} at ({x}, {y}), info={Info.Format} {Info.Width}x{Info.Height}");
+                return Array.Empty<byte>();
             }
 
-            bufferHolder.WaitForFences();
-            byte[] bitmap = new byte[size];
-            GetDataFromBuffer(bufferHolder.GetDataStorage(0, size), size, Span<byte>.Empty).CopyTo(bitmap);
-            return bitmap;
+            try
+            {
+                using (var cbs = _gd.CommandBufferPool.Rent())
+                {
+                    var buffer = bufferHolder.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
+                    var image = imageAuto.Get(cbs).Value;
+
+                    if (image.Handle == 0 || buffer.Handle == 0)
+                    {
+                        MelioraReadbackGuard.LogBrokenState("GetData",
+                            $"null handle before copy (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), region {width}x{height} at ({x}, {y}), info={Info.Format} {Info.Width}x{Info.Height}");
+                        return Array.Empty<byte>();
+                    }
+
+                    CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, 0, 0, x, y, width, height);
+                }
+
+                bufferHolder.WaitForFences();
+                byte[] bitmap = new byte[size];
+                GetDataFromBuffer(bufferHolder.GetDataStorage(0, size), size, Span<byte>.Empty).CopyTo(bitmap);
+                return bitmap;
+            }
+            finally
+            {
+                // Release the reference only after the copy command completed (fence waited
+                // above), so the image cannot be destroyed while the GPU still uses it.
+                imageAuto.DecrementReferenceCount();
+            }
         }
 
         public PinnedSpan<byte> GetData()
@@ -734,6 +761,14 @@ namespace Ryujinx.Graphics.Vulkan
             size = GetBufferDataLength(size);
 
             Span<byte> result = flushBuffer.GetTextureData(cbp, this, size);
+
+            // Meliora: an empty result means the readback failed (for example the texture
+            // was disposed before the copy ran). Do not feed it into the format converter.
+            if (result.IsEmpty)
+            {
+                return ReadOnlySpan<byte>.Empty;
+            }
+
             return GetDataFromBuffer(result, size, result);
         }
 
@@ -742,6 +777,14 @@ namespace Ryujinx.Graphics.Vulkan
             int size = GetBufferDataLength(Info.GetMipSize(level));
 
             Span<byte> result = flushBuffer.GetTextureData(cbp, this, size, layer, level);
+
+            // Meliora: an empty result means the readback failed (for example the texture
+            // was disposed before the copy ran). Do not feed it into the format converter.
+            if (result.IsEmpty)
+            {
+                return ReadOnlySpan<byte>.Empty;
+            }
+
             return GetDataFromBuffer(result, size, result);
         }
 
@@ -901,6 +944,15 @@ namespace Ryujinx.Graphics.Vulkan
             int offset = 0,
             int stride = 0)
         {
+            // Meliora: never pass a null Vulkan handle into the copy command. A disposed
+            // storage yields a zero image handle, which crashes the driver when recorded.
+            if (image.Handle == 0 || buffer.Handle == 0)
+            {
+                MelioraReadbackGuard.LogBrokenState("TextureView.CopyFromOrToBuffer",
+                    $"null handle (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), to={to}, size={size}, info={Info.Format} {Info.Width}x{Info.Height}x{Info.Depth} layers={dstLayers} levels={dstLevels}");
+                return;
+            }
+
             bool is3D = Info.Target == Target.Texture3D;
             int width = Math.Max(1, Info.Width >> dstLevel);
             int height = Math.Max(1, Info.Height >> dstLevel);
@@ -983,6 +1035,15 @@ namespace Ryujinx.Graphics.Vulkan
             int width,
             int height)
         {
+            // Meliora: never pass a null Vulkan handle into the copy command. A disposed
+            // storage yields a zero image handle, which crashes the driver when recorded.
+            if (image.Handle == 0 || buffer.Handle == 0)
+            {
+                MelioraReadbackGuard.LogBrokenState("TextureView.CopyFromOrToBuffer",
+                    $"null handle (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), to={to}, region {width}x{height} at ({x}, {y}), info={Info.Format} {Info.Width}x{Info.Height}");
+                return;
+            }
+
             var aspectFlags = Info.Format.ConvertAspectFlags();
 
             if (aspectFlags == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))

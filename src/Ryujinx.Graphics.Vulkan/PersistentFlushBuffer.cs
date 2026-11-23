@@ -88,48 +88,105 @@ namespace Ryujinx.Graphics.Vulkan
 
             var flushStorage = ResizeIfNeeded(size);
 
-            using (var cbs = cbp.Rent())
-            {
-                var buffer = flushStorage.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
-                var image = view.GetImage().Get(cbs).Value;
+            // Meliora: the view may be disposed concurrently (for example when an emergency
+            // trim evicts textures while a flush action is still running on another thread).
+            // Hold a reference on the image until the copy command has completed so that the
+            // VkImage stays valid for the whole submission, and fail cleanly when it is gone.
+            Auto<DisposableImage> imageAuto = view.GetImage();
 
-                view.CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, 0, 0, info.GetLayers(), info.Levels, singleSlice: false);
+            if (!imageAuto.TryIncrementReferenceCount())
+            {
+                MelioraReadbackGuard.LogBrokenState("GetTextureData",
+                    $"texture view is no longer alive, size={size}, info={info.Format} {info.Width}x{info.Height}x{info.Depth} layers={info.GetLayers()} levels={info.Levels}");
+                return Span<byte>.Empty;
             }
 
-            flushStorage.WaitForFences();
+            try
+            {
+                using (var cbs = cbp.Rent())
+                {
+                    var buffer = flushStorage.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
+                    var image = imageAuto.Get(cbs).Value;
 
-            Span<byte> result = flushStorage.GetDataStorage(0, size);
+                    if (image.Handle == 0 || buffer.Handle == 0)
+                    {
+                        MelioraReadbackGuard.LogBrokenState("GetTextureData",
+                            $"null handle before copy (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), size={size}, info={info.Format} {info.Width}x{info.Height}x{info.Depth} layers={info.GetLayers()} levels={info.Levels}");
+                        return Span<byte>.Empty;
+                    }
 
-            // Meliora: CPU-side wall time of the whole readback call, including the fence
-            // wait above; not pure GPU copy time.
-            MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+                    view.CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, 0, 0, info.GetLayers(), info.Levels, singleSlice: false);
+                }
 
-            return result;
+                flushStorage.WaitForFences();
+
+                Span<byte> result = flushStorage.GetDataStorage(0, size);
+
+                // Meliora: CPU-side wall time of the whole readback call, including the fence
+                // wait above; not pure GPU copy time.
+                MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+
+                return result;
+            }
+            finally
+            {
+                // Release the reference only after the copy command completed (fence waited
+                // above), so the image cannot be destroyed while the GPU still uses it.
+                imageAuto.DecrementReferenceCount();
+            }
         }
 
         public Span<byte> GetTextureData(CommandBufferPool cbp, TextureView view, int size, int layer, int level)
         {
             long melioraStart = Stopwatch.GetTimestamp();
 
+            TextureCreateInfo info = view.Info;
+
             var flushStorage = ResizeIfNeeded(size);
 
-            using (var cbs = cbp.Rent())
-            {
-                var buffer = flushStorage.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
-                var image = view.GetImage().Get(cbs).Value;
+            // Meliora: same lifetime protection as the full readback above.
+            Auto<DisposableImage> imageAuto = view.GetImage();
 
-                view.CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, layer, level, 1, 1, singleSlice: true);
+            if (!imageAuto.TryIncrementReferenceCount())
+            {
+                MelioraReadbackGuard.LogBrokenState("GetTextureData",
+                    $"texture view is no longer alive, size={size}, layer={layer}, level={level}, info={info.Format} {info.Width}x{info.Height}x{info.Depth}");
+                return Span<byte>.Empty;
             }
 
-            flushStorage.WaitForFences();
+            try
+            {
+                using (var cbs = cbp.Rent())
+                {
+                    var buffer = flushStorage.GetBuffer(cbs.CommandBuffer).Get(cbs).Value;
+                    var image = imageAuto.Get(cbs).Value;
 
-            Span<byte> result = flushStorage.GetDataStorage(0, size);
+                    if (image.Handle == 0 || buffer.Handle == 0)
+                    {
+                        MelioraReadbackGuard.LogBrokenState("GetTextureData",
+                            $"null handle before copy (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), size={size}, layer={layer}, level={level}, info={info.Format} {info.Width}x{info.Height}x{info.Depth}");
+                        return Span<byte>.Empty;
+                    }
 
-            // Meliora: CPU-side wall time of the whole readback call, including the fence
-            // wait above; not pure GPU copy time.
-            MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+                    view.CopyFromOrToBuffer(cbs.CommandBuffer, buffer, image, size, true, layer, level, 1, 1, singleSlice: true);
+                }
 
-            return result;
+                flushStorage.WaitForFences();
+
+                Span<byte> result = flushStorage.GetDataStorage(0, size);
+
+                // Meliora: CPU-side wall time of the whole readback call, including the fence
+                // wait above; not pure GPU copy time.
+                MelioraTelemetry.AddReadback(Stopwatch.GetTimestamp() - melioraStart, size);
+
+                return result;
+            }
+            finally
+            {
+                // Release the reference only after the copy command completed (fence waited
+                // above), so the image cannot be destroyed while the GPU still uses it.
+                imageAuto.DecrementReferenceCount();
+            }
         }
 
         public void Dispose()

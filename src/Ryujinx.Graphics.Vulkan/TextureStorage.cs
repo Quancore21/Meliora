@@ -374,6 +374,15 @@ namespace Ryujinx.Graphics.Vulkan
             ImageAspectFlags aspectFlags,
             bool forFlush)
         {
+            // Meliora: never pass a null Vulkan handle into the copy command. A disposed
+            // storage yields a zero image handle, which crashes the driver when recorded.
+            if (image.Handle == 0 || buffer.Handle == 0)
+            {
+                MelioraReadbackGuard.LogBrokenState("TextureStorage.CopyFromOrToBuffer",
+                    $"null handle (image=0x{image.Handle:X}, buffer=0x{buffer.Handle:X}), to={to}, size={size}, info={Info.Format} {Info.Width}x{Info.Height}x{Info.Depth} layers={dstLayers} levels={dstLevels}");
+                return;
+            }
+
             bool is3D = Info.Target == Target.Texture3D;
             int width = Info.Width;
             int height = Info.Height;
