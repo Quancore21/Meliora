@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.HLE.Exceptions;
 using Ryujinx.HLE.HOS.Applets;
 using Ryujinx.HLE.HOS.Ipc;
 using Ryujinx.HLE.HOS.Kernel;
@@ -114,6 +115,32 @@ namespace Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.Lib
             //       Since we doesn't support applets for now, it's fine to stub it.
 
             Logger.Stub?.PrintStub(LogClass.ServiceAm);
+
+            return ResultCode.Success;
+        }
+
+        [CommandCmif(90)] // 20.0.0+
+        // SetLibraryAppletGpuTimeSliceBoost(u64 Unknown0, u64 Unknown1, u64 Unknown2, u64 Unknown3)
+        //   Unnamed on switchbrew ([20.0.0+]). Documented by field observation: the Software
+        //   Keyboard applet sends four all-zero u64s right before the inline keyboard comes up.
+        //   All-zero parameters mean "no boost request" and are accepted silently, matching the
+        //   keyboard flow. Any non-zero value requests GPU time slice scheduling we do not
+        //   implement, so it surfaces as a stub failure instead of being silently ignored.
+        public ResultCode SetLibraryAppletGpuTimeSliceBoost(ServiceCtx context)
+        {
+            ulong unknown0 = context.RequestData.ReadUInt64();
+            ulong unknown1 = context.RequestData.ReadUInt64();
+            ulong unknown2 = context.RequestData.ReadUInt64();
+            ulong unknown3 = context.RequestData.ReadUInt64();
+
+            Logger.Stub?.PrintStub(LogClass.ServiceAm, new { unknown0, unknown1, unknown2, unknown3 });
+
+            if (unknown0 != 0 || unknown1 != 0 || unknown2 != 0 || unknown3 != 0)
+            {
+                throw new ServiceNotImplementedException(this, context,
+                    $"ILibraryAppletAccessor command 90 was called with non-zero parameters " +
+                    $"(0x{unknown0:X16}, 0x{unknown1:X16}, 0x{unknown2:X16}, 0x{unknown3:X16}).");
+            }
 
             return ResultCode.Success;
         }
