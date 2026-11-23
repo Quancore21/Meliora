@@ -1,6 +1,7 @@
 using Ryujinx.Common.Logging;
 using Silk.NET.Vulkan;
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -15,10 +16,10 @@ namespace Ryujinx.Graphics.Vulkan
     /// </summary>
     public static class PipelineCacheStorage
     {
-        private const uint Magic = 0x504C454D; // "MELP"
-        private const uint FormatVersion = 1;
-        private const int HeaderSize = 24;
-        private const long MaxPayloadBytes = 512L * 1024 * 1024;
+        internal const uint Magic = 0x504C454D; // "MELP"
+        internal const uint FormatVersion = 1;
+        internal const int HeaderSize = 24;
+        internal const long MaxPayloadBytes = 512L * 1024 * 1024;
         private const long MaxFolderBytes = 1536L * 1024 * 1024;
         private const long MinSaveIntervalMs = 60_000;
 
@@ -166,28 +167,38 @@ namespace Ryujinx.Graphics.Vulkan
 
             try
             {
-                FileInfo info = new(path);
+                using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
 
-                if (!info.Exists || info.Length <= HeaderSize || info.Length > MaxPayloadBytes + HeaderSize)
+                long fileLength = stream.Length;
+
+                if (fileLength <= HeaderSize || fileLength > MaxPayloadBytes + HeaderSize)
                 {
                     return null;
                 }
 
-                byte[] file = File.ReadAllBytes(path);
+                Span<byte> header = stackalloc byte[HeaderSize];
 
-                uint magic = BitConverter.ToUInt32(file, 0);
-                uint version = BitConverter.ToUInt32(file, 4);
-                long payloadLength = BitConverter.ToInt64(file, 8);
-                ulong checksum = BitConverter.ToUInt64(file, 16);
+                stream.ReadExactly(header);
 
-                if (magic != Magic || version != FormatVersion || payloadLength != file.Length - HeaderSize)
+                uint magic = BinaryPrimitives.ReadUInt32LittleEndian(header[..4]);
+                uint version = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(4, 4));
+                long payloadLength = BinaryPrimitives.ReadInt64LittleEndian(header.Slice(8, 8));
+                ulong checksum = BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(16, 8));
+
+                if (magic != Magic ||
+                    version != FormatVersion ||
+                    payloadLength <= 0 ||
+                    payloadLength > MaxPayloadBytes ||
+                    payloadLength != fileLength - HeaderSize)
                 {
                     Logger.Warning?.Print(LogClass.Gpu, "Pipeline cache: unknown file format, ignoring it");
                     return null;
                 }
 
-                byte[] payload = new byte[payloadLength];
-                System.Buffer.BlockCopy(file, HeaderSize, payload, 0, payload.Length);
+                byte[] payload = new byte[(int)payloadLength];
+
+                // ReadExactly handles partial reads and throws if the file ends early.
+                stream.ReadExactly(payload);
 
                 if (Checksum(payload) != checksum)
                 {
@@ -198,6 +209,14 @@ namespace Ryujinx.Graphics.Vulkan
                 Logger.Info?.Print(LogClass.Gpu, $"Pipeline cache: loaded {payload.Length / 1024} KiB from disk");
 
                 return payload;
+            }
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
             }
             catch (Exception ex)
             {
@@ -227,6 +246,8 @@ namespace Ryujinx.Graphics.Vulkan
 
             byte[] payload = new byte[(int)size];
 
+            nuint allocatedSize = size;
+
             fixed (byte* pPayload = payload)
             {
                 if (api.GetPipelineCacheData(device, cache, &size, pPayload) != Result.Success)
@@ -235,17 +256,38 @@ namespace Ryujinx.Graphics.Vulkan
                 }
             }
 
-            if ((int)size != payload.Length)
+            // The second call can report a smaller size, but it must never exceed the buffer.
+            if (size > allocatedSize)
             {
-                Array.Resize(ref payload, (int)size);
+                Logger.Warning?.Print(LogClass.Gpu, "Pipeline cache: driver reported an oversized payload, ignoring it");
+                return;
             }
 
-            byte[] file = new byte[HeaderSize + payload.Length];
-            BitConverter.TryWriteBytes(new Span<byte>(file, 0, 4), Magic);
-            BitConverter.TryWriteBytes(new Span<byte>(file, 4, 4), FormatVersion);
-            BitConverter.TryWriteBytes(new Span<byte>(file, 8, 8), (long)payload.Length);
-            BitConverter.TryWriteBytes(new Span<byte>(file, 16, 8), Checksum(payload));
-            System.Buffer.BlockCopy(payload, 0, file, HeaderSize, payload.Length);
+            int payloadLength = (int)size;
+
+            if (payloadLength == 0)
+            {
+                return;
+            }
+
+            WriteCacheFile(path, payload, payloadLength);
+
+            Logger.Info?.Print(LogClass.Gpu, $"Pipeline cache: saved {payloadLength / 1024} KiB");
+        }
+
+        /// <summary>
+        /// Serializes the first <paramref name="payloadLength"/> bytes of <paramref name="payload"/>
+        /// and replaces the cache file atomically.
+        /// </summary>
+        internal static void WriteCacheFile(string path, byte[] payload, int payloadLength)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(path);
+            ArgumentNullException.ThrowIfNull(payload);
+
+            if ((uint)payloadLength > (uint)payload.Length || payloadLength > MaxPayloadBytes)
+            {
+                throw new ArgumentOutOfRangeException(nameof(payloadLength));
+            }
 
             string directory = Path.GetDirectoryName(path);
 
@@ -256,10 +298,23 @@ namespace Ryujinx.Graphics.Vulkan
 
             string temp = path + ".tmp";
 
-            File.WriteAllBytes(temp, file);
-            File.Move(temp, path, true);
+            ReadOnlySpan<byte> payloadSpan = payload.AsSpan(0, payloadLength);
 
-            Logger.Info?.Print(LogClass.Gpu, $"Pipeline cache: saved {payload.Length / 1024} KiB");
+            Span<byte> header = stackalloc byte[HeaderSize];
+
+            BinaryPrimitives.WriteUInt32LittleEndian(header[..4], Magic);
+            BinaryPrimitives.WriteUInt32LittleEndian(header.Slice(4, 4), FormatVersion);
+            BinaryPrimitives.WriteInt64LittleEndian(header.Slice(8, 8), payloadLength);
+            BinaryPrimitives.WriteUInt64LittleEndian(header.Slice(16, 8), Checksum(payloadSpan));
+
+            using (FileStream stream = new(temp, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.SequentialScan))
+            {
+                stream.Write(header);
+                stream.Write(payloadSpan);
+                stream.Flush(true);
+            }
+
+            File.Move(temp, path, true);
 
             Prune(directory, path);
         }
@@ -319,7 +374,7 @@ namespace Ryujinx.Graphics.Vulkan
             return gamePath;
         }
 
-        private static ulong Checksum(byte[] data)
+        private static ulong Checksum(ReadOnlySpan<byte> data)
         {
             ulong hash = 14695981039346656037UL;
 
