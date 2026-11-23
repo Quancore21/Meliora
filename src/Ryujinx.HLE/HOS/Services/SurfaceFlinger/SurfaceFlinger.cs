@@ -43,7 +43,8 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
         private readonly long _1msTicks;
 
         private int _swapInterval;
-        private int _swapIntervalDelay;
+        private int _composeDelay;
+        private int _composeInterval = 1;
 
         private readonly object _lock = new();
 
@@ -125,11 +126,45 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
             {
                 _nextFrameEvent.Set();
                 _ticksPerFrame = 1;
+                _composeInterval = 1;
+                _composeDelay = 0;
             }
             else
             {
-                _ticksPerFrame = Stopwatch.Frequency / MelioraFramePacing.TargetHz;
+                UpdateCompositionCadence();
             }
+
+            LogCompositionMode();
+        }
+
+        /// <summary>
+        /// Recomputes both the target tick length and how many target ticks may pass between
+        /// two compositions. The target already caps the presentation rate, so the swap
+        /// interval must not cap it a second time (Target 30 + native 30 used to compose at 15).
+        /// </summary>
+        private void UpdateCompositionCadence()
+        {
+            int targetHz = MelioraFramePacing.TargetHz;
+
+            _ticksPerFrame = Stopwatch.Frequency / Math.Max(targetHz, 1);
+            _composeInterval = MelioraCompositionPacing.GetComposeTickInterval(targetHz, _swapInterval);
+            _composeDelay = 0;
+        }
+
+        private void LogCompositionMode()
+        {
+            if (_swapInterval == 0)
+            {
+                Logger.Info?.Print(LogClass.SurfaceFlinger, "Composition: uncapped (Game VSync disabled)");
+                return;
+            }
+
+            int targetHz = MelioraFramePacing.TargetHz;
+            double composeHz = (double)targetHz / _composeInterval;
+
+            Logger.Info?.Print(
+                LogClass.SurfaceFlinger,
+                $"Composition: swapInterval={_swapInterval}, target={targetHz}Hz, compose every {_composeInterval} tick(s) (~{composeHz:0.##} FPS)");
         }
 
         public IGraphicBufferProducer CreateLayer(out long layerId, ulong pid, LayerState initialState = LayerState.ManagedClosed)
@@ -371,18 +406,20 @@ namespace Ryujinx.HLE.HOS.Services.SurfaceFlinger
                         if (targetHz != _appliedTargetHz)
                         {
                             _appliedTargetHz = targetHz;
-                            _ticksPerFrame = Stopwatch.Frequency / Math.Max(targetHz, 1);
+
+                            UpdateCompositionCadence();
+                            LogCompositionMode();
                         }
                     }
 
                     if (_ticks >= _ticksPerFrame)
                     {
-                        if (_swapIntervalDelay-- == 0)
+                        if (_composeDelay-- == 0)
                         {
                             Compose();
 
-                            // When a frame is presented, delay the next one by its swap interval value.
-                            _swapIntervalDelay = Math.Max(0, _swapInterval - 1);
+                            // Delay the next composition by the already target-adjusted interval.
+                            _composeDelay = Math.Max(0, _composeInterval - 1);
                         }
 
                         _device.System?.SignalVsync();
