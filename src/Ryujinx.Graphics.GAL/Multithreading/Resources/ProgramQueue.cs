@@ -125,6 +125,7 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Resources
             while (true)
             {
                 long generation;
+                bool compiled;
 
                 lock (_sync)
                 {
@@ -133,12 +134,16 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Resources
                         return false;
                     }
 
-                    if (program.Compiled)
-                    {
-                        return true;
-                    }
+                    compiled = program.Compiled;
 
-                    generation = _generation;
+                    if (!compiled)
+                    {
+                        generation = _generation;
+                    }
+                    else
+                    {
+                        generation = -1;
+                    }
                 }
 
                 // Must run on the render thread and outside _sync: ProcessQueue calls back
@@ -152,17 +157,32 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Resources
                         return false;
                     }
 
-                    if (program.Compiled)
+                    if (!program.Compiled)
                     {
-                        return true;
+                        if (_generation == generation)
+                        {
+                            // No compilation state change happened between reading the generation
+                            // and reacquiring the lock, so it is safe to sleep until the next one.
+                            Monitor.Wait(_sync);
+                        }
+
+                        continue;
+                    }
+                }
+
+                // The waited program is done, but its completion may have raced ahead of other
+                // in-progress programs in the same ProcessQueue pass. Run one more pass so the
+                // queue settles and no completed program is left occupying a compile slot.
+                ProcessQueue();
+
+                lock (_sync)
+                {
+                    if (_stopped)
+                    {
+                        return false;
                     }
 
-                    if (_generation == generation)
-                    {
-                        // No compilation state change happened between reading the generation
-                        // and reacquiring the lock, so it is safe to sleep until the next one.
-                        Monitor.Wait(_sync);
-                    }
+                    return program.Compiled;
                 }
             }
         }
