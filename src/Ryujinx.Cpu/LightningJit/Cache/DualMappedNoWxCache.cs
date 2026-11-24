@@ -93,6 +93,16 @@ namespace Ryujinx.Cpu.LightningJit.Cache
         // (Also, mapping memory with the debugger takes quite a lot of time, so JIT cache regions need to be smaller.)
         // Therefore we need to evict old functions to make space for new ones when the cache is close to full.
         private const float EvictionThreshold = 0.85f;
+
+        // Meliora: how long evicted code must stay valid before its space can be reused.
+        // Eviction removes a function from the lookup tables, but the guest can still hold
+        // a reference to it (or be executing inside it) on any thread. The allocator reuses
+        // the lowest free offset first, so freeing immediately hands the evicted code's
+        // memory to the next translation, and a live entry point then jumps into recycled
+        // code. A grace period longer than any in-flight call chain keeps the old bytes
+        // executable until every reference is provably gone. Five seconds is far above the
+        // longest guest frame, so reuse is effectively never racing live execution.
+        private static readonly long EvictionGraceTicks = 5L * Stopwatch.Frequency;
         public bool EnableMemoryEviction => DualMappedJitAllocator.hasTXM;
 
         private readonly IStackWalker _stackWalker;
@@ -102,6 +112,24 @@ namespace Ryujinx.Cpu.LightningJit.Cache
         private readonly PageAlignedRangeList _pendingMap;
         private readonly object _lock;
         private readonly Dictionary<ulong, FunctionMetadata> _functionMetadata;
+
+        private readonly struct RetiredFunction
+        {
+            public readonly int Offset;
+            public readonly int Size;
+            public readonly long RetiredTicks;
+
+            public RetiredFunction(int offset, int size)
+            {
+                Offset = offset;
+                Size = size;
+                RetiredTicks = Stopwatch.GetTimestamp();
+            }
+        }
+
+        // Evicted shared-cache functions waiting out their grace period before the space
+        // goes back to the allocator.
+        private readonly List<RetiredFunction> _retiredFunctions = new();
         
 
         class FunctionMetadata
@@ -206,6 +234,7 @@ namespace Ryujinx.Cpu.LightningJit.Cache
             lock (_lock)
             {
                 _functionMetadata.Clear();
+                _retiredFunctions.Clear();
                 _pendingMap.Reset();
                 _sharedCache.CacheAllocator.Reset();
                 _localCache.CacheAllocator.Reset();
@@ -227,13 +256,24 @@ namespace Ryujinx.Cpu.LightningJit.Cache
                 return false;
             }
 
+            // Space retired at least one grace period ago is safe to hand back to the
+            // allocator: any thread that held a reference to it has long moved on. This
+            // alone usually satisfies the allocation, so the candidate scan below is
+            // skipped in the steady state.
+            ReclaimExpiredRetiredFunctions(requiredSize);
+
+            if (_sharedCache.CacheAllocator.FreeSize >= requiredSize)
+            {
+                return true;
+            }
+
             int usedMemory = _sharedCache.CacheAllocator.UsedSize;
             int totalMemory = (int)SharedCacheSize;
             float utilization = (float)usedMemory / totalMemory;
 
             if (utilization < EvictionThreshold)
             {
-                return false; 
+                return false;
             }
 
             var candidatesForEviction = _functionMetadata.Values
@@ -241,25 +281,76 @@ namespace Ryujinx.Cpu.LightningJit.Cache
                 .OrderByDescending(m => m.GetEvictionScore())
                 .ToList();
 
-            int freedSpace = 0;
-            int targetSpace = requiredSize * 2; 
+            int retiredSpace = 0;
+            int targetSpace = requiredSize * 2;
 
             foreach (var meta in candidatesForEviction)
             {
-                if (freedSpace >= targetSpace)
+                if (retiredSpace >= targetSpace)
                 {
                     break;
                 }
 
                 if (Translator.Functions.Remove(meta.GuestAddress))
                 {
-                    _sharedCache.Free(meta.Offset, meta.Size);
+                    // Retire instead of freeing: the evicted function's bytes must stay
+                    // executable for the grace period, because a thread can still call
+                    // into it through a reference taken before this eviction.
+                    _retiredFunctions.Add(new RetiredFunction(meta.Offset, meta.Size));
                     _functionMetadata.Remove(meta.GuestAddress);
-                    freedSpace += meta.Size;
+                    retiredSpace += meta.Size;
                 }
             }
 
-            return freedSpace >= requiredSize;
+            if (_sharedCache.CacheAllocator.FreeSize >= requiredSize)
+            {
+                return true;
+            }
+
+            // Retiring does not create free space by itself, and on the first eviction of
+            // a session there is no ripened pool yet. Hand back the longest-retired
+            // functions, oldest first: those have been out of the lookup tables the
+            // longest and are the least likely to still be referenced. Without this
+            // fallback the eviction would report success and the retry would still throw.
+            for (int i = 0; i < _retiredFunctions.Count && _sharedCache.CacheAllocator.FreeSize < requiredSize;)
+            {
+                RetiredFunction retired = _retiredFunctions[i];
+
+                _sharedCache.Free(retired.Offset, retired.Size);
+                _retiredFunctions.RemoveAt(i);
+            }
+
+            return _sharedCache.CacheAllocator.FreeSize >= requiredSize;
+        }
+
+        /// <summary>
+        /// Returns the space of retired functions whose grace period has elapsed to the
+        /// shared-cache allocator, oldest first, until at least <paramref name="requiredSize"/>
+        /// bytes are available again.
+        /// </summary>
+        private void ReclaimExpiredRetiredFunctions(int requiredSize)
+        {
+            long now = Stopwatch.GetTimestamp();
+
+            for (int i = 0; i < _retiredFunctions.Count;)
+            {
+                RetiredFunction retired = _retiredFunctions[i];
+
+                if (now - retired.RetiredTicks < EvictionGraceTicks)
+                {
+                    // The list is ordered by retirement time, so the first entry that is
+                    // still inside its grace period ends the scan.
+                    break;
+                }
+
+                _sharedCache.Free(retired.Offset, retired.Size);
+                _retiredFunctions.RemoveAt(i);
+
+                if (_sharedCache.CacheAllocator.FreeSize >= requiredSize)
+                {
+                    return;
+                }
+            }
         }
 
         public unsafe IntPtr Map(IntPtr framePointer, ReadOnlySpan<byte> code, ulong guestAddress, ulong guestSize)
@@ -558,7 +649,9 @@ namespace Ryujinx.Cpu.LightningJit.Cache
                 {
                     if (_functionMetadata.TryGetValue(addr, out var meta))
                     {
-                        _sharedCache.Free(meta.Offset, meta.Size);
+                        // Meliora: retire rather than free, for the same reason as eviction
+                        // above: a thread can still be executing or referencing this code.
+                        _retiredFunctions.Add(new RetiredFunction(meta.Offset, meta.Size));
                         _functionMetadata.Remove(addr);
                     }
                 }
