@@ -122,6 +122,17 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Resources
         /// <returns>True if the program completed, false if the queue was stopped.</returns>
         public bool WaitForProgram(ThreadedProgram program)
         {
+            // Fast path: after warmup the program is already compiled, which is the common
+            // case for every program bind. v0.0.7 returned here without touching the queue;
+            // the event-driven rewrite made each bind run ProcessQueue() twice and take the
+            // queue locks, which costs milliseconds per frame on a draw-heavy title.
+            // _inProgress is only mutated by ProcessQueue() on the render thread, so its
+            // count can be read here without _processLock.
+            if (program.Compiled && !_stopped && _inProgress.Count == 0)
+            {
+                return true;
+            }
+
             while (true)
             {
                 long generation;
