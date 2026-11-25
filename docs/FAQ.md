@@ -20,7 +20,7 @@ Latin for "better". The goal is incremental improvement over the upstream it cam
 
 Yes, under AGPL-3.0. The full text is in [LICENSE.txt](../LICENSE.txt); provenance and third-party attributions are in [NOTICE.md](../NOTICE.md).
 
-### Why is the version 0.0.5?
+### Why is the version 0.0.x?
 
 The project is young and changes quickly. The version is bumped per release; `0.0.x` is intentional, not a mistake. See [CHANGELOG.md](../CHANGELOG.md) for what each release changed.
 
@@ -88,7 +88,7 @@ The emulator core may load some of them, but Meliora does not test or support th
 
 ### Why does the image look soft?
 
-*Adaptive Resolution* lowers the internal render scale when a game is sustained-GPU-bound. In 0.0.5 the floor is x0.90 of the starting scale, so the softening is smaller than 0.0.4's x0.85 but still visible in heavy scenes. Turn the toggle off if you prefer a fixed image and accept the frame-rate dips.
+*Adaptive Resolution* lowers the internal render scale when a game is sustained-GPU-bound. The floor is x0.90 of the starting scale, so the softening is visible in heavy scenes but bounded. Turn the toggle off if you prefer a fixed image and accept the frame-rate dips.
 
 ### Why not lower the resolution further to get more FPS?
 
@@ -124,7 +124,7 @@ No, it makes it choppier. Use it only for games that natively target 30 FPS. The
 
 ### Does Smooth Pacing work?
 
-Not yet. The core can follow a changed pacing target, but the app only applies settings at launch, so the switch is a no-op in 0.0.5. It is documented as reserved rather than silently doing something unexpected.
+Not yet. The core can follow a changed pacing target, but the app only applies settings at launch, so the switch is a no-op. It is documented as reserved rather than silently doing something unexpected.
 
 ### Can I change graphics settings while a game is running?
 

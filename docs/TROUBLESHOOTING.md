@@ -109,7 +109,7 @@ iOS can terminate the app when the process footprint approaches the device limit
 What the governor can do:
 
 - Shrink the texture caches when free memory falls below the headroom.
-- Trim earlier (3/4 of the headroom in 0.0.5).
+- Trim earlier (at 3/4 of the headroom, ~575 MB on an 8 GB iPhone).
 - Run a non-blocking GC after an emergency trim.
 
 What it cannot do:
