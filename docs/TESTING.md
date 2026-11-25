@@ -1,6 +1,6 @@
 # Testing a Meliora release
 
-Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.6, including what the 0.0.5 and 0.0.6 field runs have and have not shown.
+Every performance claim in the changelog is meant to be verifiable from a game log. This guide describes how to produce those numbers with the same routine the releases are calibrated with, and what counts as a pass for 0.0.8, including what the 0.0.5 through 0.0.8 field runs have and have not shown.
 
 Testing is manual and runs on a real device. CI builds and packages the app; it cannot measure FPS, thermal behaviour or memory pressure.
 
@@ -84,6 +84,22 @@ Known 0.0.5 defects found in these logs:
 
 The logging fix is validated: this log has zero merged or timestamp-less `[Meliora]` lines. The run passes the applicable Test B criteria, but it never stepped down or up, so snap-to-floor and the 384 MB up-step guard were not exercised. The final build 29 (2026-11-20) passed a short smoke test: Test C validated at 30 FPS, idle-trim fix confirmed (no repeated trims at the 96 MiB floor), icon verified in the IPA; snap-to-floor and the 384 MB guard remain unexercised because no down-step occurred.
 
+### 0.0.8 (builds 37 and 39, SMO 1.3.0, iPhone 17, iOS 27.2.1, 2026-11-24)
+
+The 0.0.8 validation is a same-scene A/B against the 0.0.7 control, made possible by the 0.0.7 telemetry:
+
+| Metric | Build 37 (regression) | Build 39 (fix) | 0.0.7 control (build 33) |
+| --- | --- | --- | --- |
+| p50 frame interval | 24.8 ms (40 fps) | **16.7–16.9 ms (60 fps)** | 16.7–16.9 ms |
+| Windows at 60 fps | 0 of 10 | 30 of 30 (~9,500 frames) | all |
+| `presentAvg` | 22 ms | 1–6 ms | 1–5 ms |
+| `cpuAvg` / median `gpuBusy` | 1.1 ms / 10% | 0.2–3.5 ms / 10% | 0.4 ms / similar |
+| Crash / exit | JIT crash on first boot (separate launch) | none; clean `exit-emulation` | none |
+
+- **The regression was diagnosed from the logs before the fix**: build 37 showed identical guest work to 0.0.7 (`cpuAvg`, `gpuBusy`) with `presentAvg` 22 ms and p50 exactly 24.8 ms — the 120 Hz panel quantizing an over-budget frame into three vsync slots. The only steady-state hot-path difference was `WaitForProgram` running the queue twice per program bind (`917e9f2`); the fast path (`e08255e`) removed it and the interval snapped back to 16.7 ms in every window.
+- **Tomodachi Life (build 39)** held its native 30 fps cap against the 0.0.7 baseline (p50 33.3 ms, p95 36.6–36.8 ms in every window), with a working keyboard, memory peak 4617 MB vs 4704 MB on 0.0.7 (within session noise), and no `Broken readback` guard lines.
+- **Not yet shown in the field:** the JIT eviction path did not observably fire during the monitored sessions (the crash it fixes was reproduced on build 37 with the identical 0.0.6 signature); snap-to-floor and the 384 MB up-step guard remain unexercised.
+
 ## Test matrix
 
 | Test | Length | Purpose |
@@ -139,6 +155,8 @@ The release is considered validated when a 10–15 minute run on the reference r
 | Stability | No unexplained crash or jetsam kill. |
 
 **0.0.6 status (2026-11-20): build 25 passes the applicable Test B criteria, build 29 passes Test C.** The build 25 run is 10:06, made no false step down, has clean logging and exited normally. The build 29 smoke test (2026-11-20) validated Test C at 30 FPS (29–30 FPS, `budget=35.0ms`, no false step down, clean exit), confirmed the idle-trim fix in the field (texture cache at 92–96 MiB with `minAvail` 470–590 MB produced zero repeated trims; the one trim that fired had `texCache 102 MiB`), observed the emergency trim floor below 96 MiB after iOS memory warnings (76–79 MiB; 47 MiB during a level load) and verified the Liquid Glass icon in the IPA. A 60 FPS session at 2.00x crashed from memory pressure in ~45 s (`minAvail` 260 MB, seven warnings) — scales above 1.00x are not viable on 8 GB. No run stepped down, so the snap-to-floor, three-decimal step log and 384 MB guard branches remain code-verified only. The three 0.0.5 runs remain field evidence for the controller policy but are shorter than Test B.
+
+**0.0.8 status (2026-11-24): build 39 passes Test A against the 0.0.7 control; Test B remains pending.** The same-scene A/B held 60 fps (p50 16.7–16.9 ms) in 30 consecutive windows where the regression build 37 held 40 fps (p50 24.8 ms), with no crash and a clean exit. The controller was never load-stressed in that session (no step down), so the Test B criteria remain as validated for 0.0.6: the thresholds are unchanged since 0.0.5/0.0.6, and no field session has yet stepped down.
 
 If a criterion fails, keep the log and open an issue with the relevant lines. Do not change multiple thresholds at once; a log with two changes cannot tell you which one mattered.
 

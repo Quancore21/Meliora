@@ -2,7 +2,7 @@
 
 This directory contains the documentation for Meliora, an unofficial Nintendo Switch emulator for iPhone and iPad. The project is a fork of MeloVertex, MeloNX and Ryujinx; the documents below describe what this fork changes, how it is built and how its performance claims are tested.
 
-**Current release: 0.0.5.** The adaptive thresholds are calibrated from the first 0.0.4 field log; device validation is in progress. See [PERFORMANCE.md](PERFORMANCE.md) for the current values and [TESTING.md](TESTING.md) for the validation routine.
+**Current release: 0.0.8.** It restores the 0.0.7 frame pacing and fixes the shared JIT eviction crash present since 0.0.6; the adaptive thresholds are unchanged since the 0.0.5/0.0.6 calibration. See [PERFORMANCE.md](PERFORMANCE.md) for the current values and [TESTING.md](TESTING.md) for the validation routine.
 
 ## Start here
 

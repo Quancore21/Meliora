@@ -2,7 +2,7 @@
 
 This document explains the Meliora Adaptive Engine, the memory governor and the evidence behind their current values. It is written for people who want to understand a log, tune an experiment or challenge a release claim. Every number here comes from a game log or from a constant in the code; when the code and this document disagree, the code is right and the document is a bug.
 
-The current values are the 0.0.6 values. They were calibrated from the first long 0.0.4 field log, checked against three 0.0.5 field sessions (4.5–6.1 minutes each), and a 0.0.6 build 25 run passed the 10-minute Test B (10:06). The final build 29 (2026-11-20) then passed a short smoke test: Test C validated at 30 FPS, the idle-trim fix confirmed in the field, the Liquid Glass icon verified in the IPA. No run stepped down, so snap-to-floor and the 384 MB up-step guard remain unexercised in the field. The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.5) and [CHANGELOG](../CHANGELOG.md) say what is known and what is still open.
+The current values are the 0.0.6 values, and 0.0.8 did not change them. They were calibrated from the first long 0.0.4 field log, checked against three 0.0.5 field sessions (4.5-6.1 minutes each), and a 0.0.6 build 25 run passed the 10-minute Test B (10:06). The final build 29 (2026-11-20) then passed a short smoke test: Test C validated at 30 FPS, the idle-trim fix confirmed in the field, the Liquid Glass icon verified in the IPA. No run stepped down, so snap-to-floor and the 384 MB up-step guard remain unexercised in the field. The 0.0.8 release did not touch the controller; it restored frame pacing and fixed the JIT eviction crash (see the [0.0.8 calibration section](#008-program-queue-fast-path-jit-eviction-grace)). The [release notes](https://github.com/Quancore21/Meliora/releases/tag/v0.0.8) and [CHANGELOG](../CHANGELOG.md) say what is known and what is still open.
 
 ## Design principles
 
@@ -211,6 +211,15 @@ Open:
 - The memory peak remains a field risk. The memory-aware up-step guard and the idle-trim cleanup avoid bad behaviour, but they do not lower the peak.
 - The `MELIORA_UNIFIED_MEMORY=1` experiment is closed (see [Unified Memory](#unified-memory-meliora_unified_memory1)); the branch is not merged and the override stays off.
 - The thresholds still come from a small sample; do not generalize them to other games or devices without a log.
+
+### 0.0.8 (program-queue fast path; JIT eviction grace)
+
+0.0.8 changed nothing in the controller. Its two performance-relevant changes were both diagnosed from the 0.0.7 telemetry:
+
+- **Program-queue fast path** (`e08255e`). The event-driven `WaitForProgram` rewrite (`917e9f2`, made during 0.0.8 development) ran `ProcessQueue()` twice and took the queue locks on every program bind, even for programs that had finished compiling long ago. A draw-heavy title sets the program thousands of times per frame; the added host-side work pushed the frame interval over the 16.7 ms budget, and the 120 Hz panel quantized the over-budget frame into three vsync slots — exactly 24.8 ms p50 / 40 fps in SMO, with `cpuAvg`/`gpuBusy` identical to the 0.0.7 control. This is a pacing lesson the controller was not involved in: the frame time the adaptive controller measures does not include the queue lock traffic, because that work happens on the render thread between guest CPU work and the present, so a regression can hide from `cpuAvg`/`gpuBusy` and still cost two thirds of the frame rate. The fast path restores the 0.0.7 behaviour for compiled programs while the queue is idle; the drain semantics from `095d7c4` are kept for uncompiled programs and shutdown.
+- **JIT eviction grace period** (`6ac9afa`). On TXM devices the shared JIT cache evicts functions at 85% utilization and previously freed their memory immediately. The eviction score only sees translation-path accesses, so hot fast-path functions look stale and the earliest-translated, lowest-offset functions are evicted first; the allocator reuses the lowest free offset, so the next translation lands where a live `TranslatedFunction` still points — the crash signature `PC = FAR = x16 = 0x7000000000` (shared cache base + offset 0) present since 0.0.6 build 25. Evicted code is now retired for five seconds before its space returns to the allocator, so a live entry point can no longer reach recycled code. This is not visible in any telemetry line; it is verified by code review and the exact signature match, and the eviction path has not fired in a monitored on-device session yet.
+
+Field result (build 39, 2026-11-24, same device and route): p50 16.7–16.9 ms in 30 consecutive SMO windows, `presentAvg` 1–6 ms, no crash, clean exit. Tomodachi Life held its native 30 fps cap with the keyboard working.
 
 ## Memory governor
 

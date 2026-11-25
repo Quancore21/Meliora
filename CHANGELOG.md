@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.0.8 (2026-11-24)
+
+0.0.8 restores the 0.0.7 frame pacing and fixes the shared JIT crash that has been present since 0.0.6. It is built directly on the 0.0.7 telemetry baseline: the `mem-detail`/`perf-detail` lines from the 0.0.7 field data identified both root causes before any code was changed.
+
+### Fixed
+
+- **JIT crash, signature `PC = FAR = x16 = 0x7000000000`** (present since 0.0.6 build 25, reproduced on 0.0.8 build 37). On TXM devices the shared JIT cache evicts functions at 85% utilization and freed their memory immediately. The eviction score only sees accesses made through the translation path, so hot functions entered by fast-path calls look stale and the earliest-translated, lowest-offset functions are evicted first; the allocator reuses the lowest free offset, so the next translation lands exactly where a live `TranslatedFunction` still points and a call through it jumps into recycled code. Evicted code is now retired for a five-second grace period before its space returns to the allocator; region invalidation retires the same way. A last-resort fallback frees the longest-retired functions when the cache is already full and nothing has ripened yet, keeping the pre-0.0.8 behaviour for a session's first eviction instead of throwing `OutOfMemoryException`. (`6ac9afa`)
+- **60 → 40 fps regression in draw-heavy titles.** The event-driven `WaitForProgram` rewrite (`917e9f2`) ran `ProcessQueue()` twice and took the queue locks on every program bind, even when the program had finished compiling long ago; a draw-heavy title sets the program thousands of times per frame, and the extra queue passes and lock traffic pushed the frame budget over the vsync slot on a 120 Hz display. The fast path is restored for compiled programs while the queue is idle; uncompiled programs and shutdown keep the event-driven wait and the final drain from `095d7c4`. (`e08255e`)
+- **Texture readback SIGSEGV after an emergency trim** (`vkCmdCopyImageToBuffer` recorded with `VK_NULL_HANDLE`, field crash on build 35, binary-verified against the shipped libMoltenVK). The readback paths had no lifetime protection: a texture disposed concurrently (emergency trim eviction while a memory-tracking flush action was in flight) left `Get(cbs)` returning a zero handle that was recorded into the copy command. `PersistentFlushBuffer.GetTextureData` and `TextureView.GetData` now hold a reference on the image across recording and the fence wait, and null image/buffer handles are rejected as a last line of defense. (`874d4c2`)
+- **Composition double-limiting at target 30** in SurfaceFlinger. (`d82688f`)
+- **Pipeline cache save/load transiently doubled ~510 MiB** in two LOH byte arrays (a 0.0.7 field finding); the cache file is now streamed without double buffering. (`e93791c`)
+
+### Added
+
+- **Software keyboard on firmware 20.0.0+.** Tomodachi Life hit a missing `ILibraryAppletAccessor` command 0x5A exactly when the SoftwareKeyboard applet came up and the keyboard never appeared. The command is unnamed on switchbrew ([20.0.0+]); all-zero parameters are accepted with Success (the exact request shape from the field capture), non-zero values surface as `ServiceNotImplementedException` instead of being silently dropped. Dispatch tests cover registration, both paths, and that no other method claims command 90. (`b742bfc`)
+- **`IHidServer` `SetGestureOutputRanges` stub** (command 92), needed by Tomodachi Life to pass its boot path. (`fa15293`)
+- **Program drain before `WaitForProgram` returns**, so a finished compilation is always picked up in the same call instead of the next one. (`095d7c4`)
+- **Readback guard logging** for broken readback states (missing `MelioraReadbackGuard` symbol, null handles): throttled, and only for broken states — normal readbacks (2000–2500 per window in SMO) are never logged.
+
+### Field results (build 39, 2026-11-24, SMO 1.3.0, reference iPhone 17, iOS 27.2.1)
+
+The regression was measured with the 0.0.7 control before the fix: build 37 ran the same scene at p50 24.8 ms / 40 fps with `presentAvg` 22 ms, GPU idle 10% and `cpuAvg` 1.1 ms — identical guest work to 0.0.7, pointing at host-side pacing, which the program-queue fast path removed.
+
+| Metric | Build 37 (regression) | Build 39 (fix) | 0.0.7 baseline (build 33) |
+| --- | --- | --- | --- |
+| p50 frame interval | 24.8 ms (40 fps) | **16.7–16.9 ms (60 fps)** | 16.7–16.9 ms |
+| Windows at 60 fps | 0 of 10 | 30 of 30 (~9,500 frames) | all |
+| `presentAvg` | 22 ms | 1–6 ms | 1–5 ms |
+| `cpuAvg` / median `gpuBusy` | 1.1 ms / 10% | 0.2–3.5 ms / 10% | 0.4 ms / similar |
+
+- No crash, no `|E|` lines, no `Broken readback` guard lines, clean exit (`exit-emulation`).
+- Tomodachi Life (build 39): native 30 fps cap unchanged against the 0.0.7 baseline (p50 33.3 ms, p95 36.6–36.8 ms in every window), keyboard worked, memory peak 4617 MB vs 4704 MB on 0.0.7 — within session noise.
+
+### Still open
+
+- The JIT eviction grace period is verified by code review and by the exact match between the fix and the crash signature; the eviction path has not yet fired in a monitored on-device session. A long-session `.ips` with the same signature would falsify this — none has arrived.
+- Memory pressure at large scene transitions (inherited from 0.0.5/0.0.6); the texture cache is not the cause.
+- Snap-to-floor, the three-decimal step log and the 384 MB up-step guard remain code-verified only: no field session has stepped down.
+
+## 0.0.7 (2026-11-22)
+
+0.0.7 is a **diagnostic baseline**, not a feature release: it ships the final *Memory & Performance Breakdown* telemetry spec so the 0.0.8 plan could be built on one targeted change with one control measurement.
+
+### Added
+
+- **`mem-detail` / `perf-detail` telemetry lines every 10 s**: guest regions, texture/buffer cache owners, managed-heap `gc` snapshot, physical Vulkan memory split into `vkBuf`/`vkNonBuf` with the largest suballocated free range, per-thread flush buffers, fence poll/timed/block categories, CPU-side readback timings, multi-range buffer logical size. The full field formats are in [PERFORMANCE.md](docs/PERFORMANCE.md#detail-lines-007).
+- **Telemetry hardening before field test**: the `RequestFlush` race is fixed with a `StatePreparing` gate; flush-buffer stats are thread-safe; `drop=` was renamed to `sampleOverflow=` (ring overflow, not dropped frames).
+
+### What the field data showed (iPhone 17, build 33, SMO)
+
+These findings were recorded as the baseline the 0.0.8 change list was built from:
+
+1. **Link-poll storm.** Up to 12.4M `linkPoll` events per 10 s during shader compilation bursts; the root cause is the `WaitForProgram` spin loop polling every in-progress program per iteration (pure CPU, no driver calls).
+2. **Readback bursts on scene changes and emergency trims.** LRU eviction flushes dirty textures slice-by-slice on the GPU main thread (up to ~2500 readbacks, 97–124 MiB per window), which also feeds `ServiceNv Wait` stalls of up to ~920 ms.
+3. **Vulkan allocator churn.** ~84k `vkAllocateMemory`/`vkFreeMemory` per 9 min — a destroy-then-recreate cycle of per-texture memory blocks; retained `vkNonBuf` (up to ~700 MiB) is live texture memory, not leaked empty blocks.
+4. **Pipeline cache save/load transiently doubles ~510 MiB** in two LOH byte arrays — the observed GC spikes at session start/shutdown. Fixed in 0.0.8 (`e93791c`).
+
+SMO held 60 fps (p50 16.7 ms) on this build, which made it the performance control for the 0.0.8 regression.
+
 ## 0.0.6 (2026-11-20)
 
 0.0.6 fixes and the Liquid Glass app icon. Build 25 (2026-11-19) field-tested the logging fix and passed the 10-minute Test B with no false step down. The final build 29 (2026-11-20) was then smoke-tested on device: the 30 FPS target path ran for the first time and held 29–30 FPS with no false step down, and the idle-trim fix held with zero repeated trims. No down-step occurred in any run, so snap-to-floor and the three-decimal step log are still code-verified only.
